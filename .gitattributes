@@ -1,0 +1,4 @@
+bond_demo_v4_2/*.tar.gz filter=lfs diff=lfs merge=lfs -text
+dockerbuild_workspace/program_package/*.tar.gz filter=lfs diff=lfs merge=lfs -text
+mstest.tar filter=lfs diff=lfs merge=lfs -text
+mstest1406.jar filter=lfs diff=lfs merge=lfs -text

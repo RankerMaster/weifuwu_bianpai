@@ -1,0 +1,391 @@
+{
+    "nodes": [
+        {
+            "id": "82c13819-100a-4a31-81d6-e34196a7b842",
+            "text": "R1",
+            "type": "base-r",
+            "showConfig": {
+                "position": {
+                    "x": 1220,
+                    "y": 150
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-r.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseR",
+                    "params": [
+                        {
+                            "name": "阻值",
+                            "key": "R",
+                            "value": 1
+                        }
+                    ],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "0feadc93-0fd5-493c-83d4-0cfdecd02537",
+            "text": "R2",
+            "type": "base-r",
+            "showConfig": {
+                "position": {
+                    "x": 1040,
+                    "y": 320
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-r.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseR",
+                    "params": [
+                        {
+                            "name": "阻值",
+                            "key": "R",
+                            "value": 1
+                        }
+                    ],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "282665cf-abb0-429b-9c94-a2ac21e0eb6f",
+            "text": "N1",
+            "type": "base-e-node",
+            "showConfig": {
+                "position": {
+                    "x": 680,
+                    "y": 200
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseENode",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "d7603a84-6ac5-4113-b443-f879f47a2b5a",
+            "text": "U",
+            "type": "base-e-source",
+            "showConfig": {
+                "position": {
+                    "x": 480,
+                    "y": 200
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-source.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseESource",
+                    "params": [
+                        {
+                            "name": "势源值",
+                            "key": "source_e2",
+                            "value": 1
+                        }
+                    ],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "7edfd3f9-31e2-4967-b676-9545f139bddc",
+            "text": "N4",
+            "type": "base-f-node",
+            "showConfig": {
+                "position": {
+                    "x": 840,
+                    "y": 320
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-f-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseFNode",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "877499e1-acd8-48f1-9667-984afa9891da",
+            "text": "I2",
+            "type": "base-f-detect",
+            "showConfig": {
+                "position": {
+                    "x": 1040,
+                    "y": 390
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-f-detect.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseFDetect",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "67d9ece6-2260-45ba-aa29-fcf0cf15cf0b",
+            "text": "C",
+            "type": "base-c",
+            "showConfig": {
+                "position": {
+                    "x": 1040,
+                    "y": 80
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-c.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseC",
+                    "params": [
+                        {
+                            "name": "电容",
+                            "key": "C",
+                            "value": 1
+                        }
+                    ],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "9f667b6a-3148-4e77-80e6-7956418552dd",
+            "text": "N2",
+            "type": "base-f-node",
+            "showConfig": {
+                "position": {
+                    "x": 840,
+                    "y": 130
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-f-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseFNode",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "3969bee3-aca8-48d9-91fa-a75c6df1431e",
+            "text": "N3",
+            "type": "base-e-node",
+            "showConfig": {
+                "position": {
+                    "x": 1040,
+                    "y": 190
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseENode",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        },
+        {
+            "id": "52506da1-555e-403a-8602-e57c1c0e5fa6",
+            "text": "V1",
+            "type": "base-e-detect",
+            "showConfig": {
+                "position": {
+                    "x": 1220,
+                    "y": 230
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-detect.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseEDetect",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red"
+                }
+            }
+        }
+    ],
+    "edges": [
+        {
+            "id": "a5a03426-7aa6-4c52-a7ea-c43ce82dd3f9",
+            "from": "d7603a84-6ac5-4113-b443-f879f47a2b5a",
+            "to": "282665cf-abb0-429b-9c94-a2ac21e0eb6f",
+            "fromName": "U",
+            "toName": "N1",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 530,
+                    "y": 200
+                },
+                "endAnchor": {
+                    "x": 630,
+                    "y": 200
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "e1430b74-28fa-443d-b9f5-12c89cd655b7",
+            "from": "7edfd3f9-31e2-4967-b676-9545f139bddc",
+            "to": "0feadc93-0fd5-493c-83d4-0cfdecd02537",
+            "fromName": "N4",
+            "toName": "R2",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 890,
+                    "y": 320
+                },
+                "endAnchor": {
+                    "x": 990,
+                    "y": 320
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "2649a40b-4703-4fb4-af35-4bc8c0caf622",
+            "from": "282665cf-abb0-429b-9c94-a2ac21e0eb6f",
+            "to": "7edfd3f9-31e2-4967-b676-9545f139bddc",
+            "fromName": "N1",
+            "toName": "N4",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 730,
+                    "y": 200
+                },
+                "endAnchor": {
+                    "x": 790,
+                    "y": 320
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "cb9014f1-26a5-47b5-9338-cc230d15f106",
+            "from": "7edfd3f9-31e2-4967-b676-9545f139bddc",
+            "to": "877499e1-acd8-48f1-9667-984afa9891da",
+            "fromName": "N4",
+            "toName": "I2",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 890,
+                    "y": 320
+                },
+                "endAnchor": {
+                    "x": 990,
+                    "y": 390
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "d0d421df-edff-4f6c-bdb7-5c3a3beae0b7",
+            "from": "282665cf-abb0-429b-9c94-a2ac21e0eb6f",
+            "to": "9f667b6a-3148-4e77-80e6-7956418552dd",
+            "fromName": "N1",
+            "toName": "N2",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 730,
+                    "y": 200
+                },
+                "endAnchor": {
+                    "x": 790,
+                    "y": 130
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "0b2fd3b5-e2d5-4244-aa24-2e715d093347",
+            "from": "9f667b6a-3148-4e77-80e6-7956418552dd",
+            "to": "67d9ece6-2260-45ba-aa29-fcf0cf15cf0b",
+            "fromName": "N2",
+            "toName": "C",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 890,
+                    "y": 130
+                },
+                "endAnchor": {
+                    "x": 990,
+                    "y": 80
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "a0c618b5-8bd0-42c3-8008-01666f6b62f9",
+            "from": "9f667b6a-3148-4e77-80e6-7956418552dd",
+            "to": "3969bee3-aca8-48d9-91fa-a75c6df1431e",
+            "fromName": "N2",
+            "toName": "N3",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 890,
+                    "y": 130
+                },
+                "endAnchor": {
+                    "x": 990,
+                    "y": 190
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "ea9722c8-cf73-4f91-9cfb-b1075d954763",
+            "from": "3969bee3-aca8-48d9-91fa-a75c6df1431e",
+            "to": "82c13819-100a-4a31-81d6-e34196a7b842",
+            "fromName": "N3",
+            "toName": "R1",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 1090,
+                    "y": 190
+                },
+                "endAnchor": {
+                    "x": 1170,
+                    "y": 150
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "e2a5cca3-d232-4038-b923-1ae049e92821",
+            "from": "3969bee3-aca8-48d9-91fa-a75c6df1431e",
+            "to": "52506da1-555e-403a-8602-e57c1c0e5fa6",
+            "fromName": "N3",
+            "toName": "V1",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 1090,
+                    "y": 190
+                },
+                "endAnchor": {
+                    "x": 1170,
+                    "y": 230
+                },
+                "properties": {}
+            }
+        }
+    ]
+}

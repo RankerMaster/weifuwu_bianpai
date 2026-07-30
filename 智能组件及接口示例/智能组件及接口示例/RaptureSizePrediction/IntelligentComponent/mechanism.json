@@ -1,0 +1,4 @@
+{
+    "input_series": X_timeserise,   # X_timeserise=[12,15,18,……]，Containment radioactive time series data in the 200s
+    "output": Y,    # Y=0.7, the rupture size of the steam generator tube wall leakage in the nuclear power plant
+}

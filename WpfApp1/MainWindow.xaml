@@ -4,14 +4,75 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Docker 管理概览"
+        Title="微服务编排管理"
         Height="860"
         Width="1500"
-        MinHeight="760"
-        MinWidth="1200"
         Background="#F2F4F7"
         FontFamily="Microsoft YaHei UI">
-    <Grid>
+    <Window.Resources>
+        <Style x:Key="ContainerActionButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="40" />
+            <Setter Property="MinWidth" Value="112" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Background" Value="#E5E7EB" />
+            <Setter Property="BorderBrush" Value="#9CA3AF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#1E3556" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="BtnBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="BtnBorder" Property="Background" Value="#A8CFE6" />
+                                <Setter TargetName="BtnBorder" Property="BorderBrush" Value="#4D97C6" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="BtnBorder" Property="Background" Value="#9FC8E2" />
+                                <Setter TargetName="BtnBorder" Property="BorderBrush" Value="#3E86B6" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="BtnBorder" Property="Opacity" Value="0.65" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="DataGridRow">
+            <Setter Property="Foreground" Value="#111827" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#B1ECFF" />
+                    <Setter Property="Foreground" Value="#0F172A" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="DataGridCell">
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#B1ECFF" />
+                    <Setter Property="Foreground" Value="#0F172A" />
+                    <Setter Property="BorderBrush" Value="#B1ECFF" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <Viewbox Stretch="Uniform" StretchDirection="Both">
+        <Grid Width="1500" Height="860">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="235" />
             <ColumnDefinition Width="*" />
@@ -23,26 +84,32 @@
                 BorderThickness="0,0,1,0">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="62" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Button Grid.Row="0"
+                <Button x:Name="AwarenessButton"
+                        Grid.Row="0"
                         Background="#FFFFFF"
-                        BorderBrush="#D8DDE6"
+                        BorderBrush="#EBEEF3"
                         BorderThickness="0,0,0,1"
-                        Padding="18,0"
+                        Padding="20,13"
                         Cursor="Hand"
-                        HorizontalContentAlignment="Left"
+                        HorizontalContentAlignment="Stretch"
                         Click="AwarenessButton_OnClick">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="▦" FontSize="18" Foreground="#3C4758" VerticalAlignment="Center" />
-                        <TextBlock Margin="12,0,0,0" Text="镜像和容器感知" FontSize="19" FontWeight="SemiBold" Foreground="#2F3A4A" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="26" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="▦" FontSize="15" Foreground="#596273" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        <TextBlock x:Name="AwarenessText" Grid.Column="1" Margin="0" Text="镜像和容器感知" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
+                    </Grid>
                 </Button>
 
-                <StackPanel Grid.Row="1" Margin="0,10,0,0">
-                    <Button Background="#FFFFFF" BorderBrush="#EBEEF3" BorderThickness="0,0,0,1" Padding="20,13" Cursor="Hand" HorizontalContentAlignment="Stretch" Click="ServiceImageButton_OnClick">
+                <StackPanel Grid.Row="1" Margin="0,0,0,0">
+                    <Button x:Name="ServiceImageButton" Background="#FFFFFF" BorderBrush="#EBEEF3" BorderThickness="0,0,0,1" Padding="20,13" Cursor="Hand" HorizontalContentAlignment="Stretch" Click="ServiceImageButton_OnClick">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="26" />
@@ -50,11 +117,11 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="◧" FontSize="15" Foreground="#596273" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="微服务镜像编排" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
+                            <TextBlock x:Name="ServiceImageText" Grid.Column="1" Text="微服务镜像编排" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
 
-                    <Button Background="#FFFFFF" BorderBrush="#EBEEF3" BorderThickness="0,0,0,1" Padding="20,13" Cursor="Hand" HorizontalContentAlignment="Stretch" Click="ServiceContainerButton_OnClick">
+                    <Button x:Name="ServiceContainerButton" Background="#FFFFFF" BorderBrush="#EBEEF3" BorderThickness="0,0,0,1" Padding="20,13" Cursor="Hand" HorizontalContentAlignment="Stretch" Click="ServiceContainerButton_OnClick">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="26" />
@@ -62,11 +129,11 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="⌁" FontSize="15" Foreground="#596273" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="微服务容器编排" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
+                            <TextBlock x:Name="ServiceContainerText" Grid.Column="1" Text="微服务容器编排" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
 
-                    <Button Background="#FFFFFF" BorderBrush="#EBEEF3" BorderThickness="0,0,0,1" Padding="20,13" Cursor="Hand" HorizontalContentAlignment="Stretch" Click="StrategyButton_OnClick">
+                    <Button x:Name="StrategyButton" Background="#FFFFFF" BorderBrush="#EBEEF3" BorderThickness="0,0,0,1" Padding="20,13" Cursor="Hand" HorizontalContentAlignment="Stretch" Click="StrategyButton_OnClick">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="26" />
@@ -74,7 +141,7 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="▣" FontSize="15" Foreground="#596273" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="容器器策略优化" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
+                            <TextBlock x:Name="StrategyText" Grid.Column="1" Text="容器策略优化" FontSize="15" Foreground="#303B4A" VerticalAlignment="Center" />
                         </Grid>
                     </Button>
                 </StackPanel>
@@ -89,27 +156,33 @@
                 </Grid.RowDefinitions>
 
                 <UniformGrid x:Name="DashboardTopPanel" Grid.Row="0" Columns="3" Margin="0,0,0,12">
-                    <Border Margin="0,0,8,0" CornerRadius="8" Padding="14" MinHeight="150" Background="#3F72D8">
+                    <Border Margin="0,0,8,0" CornerRadius="8" Padding="18" MinHeight="190" Background="#3F72D8">
                         <StackPanel>
-                            <TextBlock Text="镜像" Foreground="White" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Right" Margin="0,0,-0.2,0" Width="369" />
+                            <TextBlock Text="镜像"
+                                       Foreground="White"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Left"
+                                       TextWrapping="NoWrap"
+                                       TextTrimming="None" />
                             <TextBlock x:Name="ImageCountText" Text="30个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
-                    <Border Margin="8,0" CornerRadius="8" Padding="14" MinHeight="150" Background="#2563D6">
+                    <Border Margin="8,0" CornerRadius="8" Padding="18" MinHeight="190" Background="#2563D6">
                         <StackPanel>
                             <TextBlock Text="已启动容器" Foreground="White" FontSize="18" FontWeight="SemiBold" />
                             <TextBlock x:Name="ContainerCountText" Text="5个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
-                    <Border Margin="8,0,0,0" CornerRadius="8" Padding="12" MinHeight="150" Background="#FFFFFF" BorderBrush="#DFE5EE" BorderThickness="1">
+                    <Border Margin="8,0,0,0" CornerRadius="8" Padding="16" MinHeight="190" Background="#FFFFFF" BorderBrush="#DFE5EE" BorderThickness="1">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="已启动的设备：" FontSize="17" FontWeight="SemiBold" Foreground="#1F2937" VerticalAlignment="Center" />
                                 <TextBlock x:Name="RunningDeviceCountText" Text="3个" FontSize="20" FontWeight="Bold" Foreground="#2563EB" Margin="6,0,0,0" VerticalAlignment="Center" />
                             </StackPanel>
-                            <ScrollViewer Margin="0,8,0,0" VerticalScrollBarVisibility="Auto" Height="106">
+                            <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" Height="134">
                                 <StackPanel x:Name="DevicePreviewPanel" />
                             </ScrollViewer>
                         </StackPanel>
@@ -127,127 +200,181 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="12" />
                             <RowDefinition Height="300" />
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,0,8">
-                            <TextBlock Text="设备：" FontSize="20" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <ComboBox x:Name="DeviceSelector"
-                                      Width="380"
-                                      Height="30"
-                                      Margin="6,0,0,0"
-                                      Background="#F3F4F6"
-                                      BorderBrush="#C7CDD4"
-                                      BorderThickness="1"
-                                      Foreground="#111827"
-                                      SelectionChanged="DeviceSelector_OnSelectionChanged">
-                                <ComboBox.Resources>
-                                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#F3F4F6" />
-                                    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#F3F4F6" />
-                                    <Style TargetType="ComboBoxItem">
-                                        <Setter Property="Background" Value="#F3F4F6" />
-                                        <Setter Property="Foreground" Value="#111827" />
-                                        <Setter Property="Padding" Value="8,5" />
-                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                        <Style.Triggers>
-                                            <Trigger Property="IsHighlighted" Value="True">
-                                                <Setter Property="Background" Value="#E5E7EB" />
-                                            </Trigger>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="#D1D5DB" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ComboBox.Resources>
-                            </ComboBox>
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="1" Text="资源利用率" FontSize="20" Foreground="#1F2937" FontWeight="SemiBold" Margin="0,0,0,10" />
-
-                        <Grid Grid.Row="2">
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="330" />
+                                <ColumnDefinition Width="280" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
-                            <Grid Grid.Column="0" Width="290" Height="290" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Canvas Width="290" Height="290">
+                            <TextBlock Grid.Column="0"
+                                       Text="资源利用率"
+                                       FontSize="20"
+                                       Foreground="#1F2937"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
+                                <Button x:Name="ReadDeviceInfoButton"
+                                        Content="读取设备信息"
+                                        Height="32"
+                                        MinWidth="128"
+                                        Margin="0,0,10,0"
+                                        Padding="14,2"
+                                        Background="#E5E7EB"
+                                        BorderBrush="#9CA3AF"
+                                        BorderThickness="1"
+                                        Foreground="#1E3556"
+                                        FontWeight="SemiBold"
+                                        Cursor="Hand"
+                                        Click="ReadDeviceInfoButton_OnClick" />
+                                <Button x:Name="DashboardRefreshButton"
+                                        Content="刷新"
+                                        Height="32"
+                                        MinWidth="88"
+                                        Margin="0,0,10,0"
+                                        Padding="14,2"
+                                        Background="#E5E7EB"
+                                        BorderBrush="#9CA3AF"
+                                        BorderThickness="1"
+                                        Foreground="#1E3556"
+                                        FontWeight="SemiBold"
+                                        Cursor="Hand"
+                                        Click="DashboardRefreshButton_OnClick" />
+                                <TextBlock Text="设备：" FontSize="16" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <ComboBox x:Name="DeviceSelector"
+                                          Width="300"
+                                          Height="30"
+                                          Margin="6,0,0,0"
+                                          Background="#F3F4F6"
+                                          BorderBrush="#C7CDD4"
+                                          BorderThickness="1"
+                                          Foreground="#111827"
+                                          HorizontalContentAlignment="Left"
+                                          VerticalContentAlignment="Center"
+                                          SelectionChanged="DeviceSelector_OnSelectionChanged">
+                                    <ComboBox.Resources>
+                                        <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#F3F4F6" />
+                                        <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#F3F4F6" />
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="Background" Value="#F3F4F6" />
+                                            <Setter Property="Foreground" Value="#111827" />
+                                            <Setter Property="Padding" Value="8,5" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                                            <Style.Triggers>
+                                                <Trigger Property="IsHighlighted" Value="True">
+                                                    <Setter Property="Background" Value="#E5E7EB" />
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter Property="Background" Value="#D1D5DB" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ComboBox.Resources>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="280" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Grid Grid.Column="0" Width="190" Height="190" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Canvas x:Name="PieCanvas" Width="190" Height="190">
                                     <Path x:Name="CpuSlicePath" Fill="#4F86F7" Stroke="#FFFFFF" StrokeThickness="2" Cursor="Hand" MouseEnter="PieSlice_OnMouseEnter" MouseLeftButtonUp="PieSlice_OnMouseLeftButtonUp" />
                                     <Path x:Name="MemorySlicePath" Fill="#FF7A00" Stroke="#FFFFFF" StrokeThickness="2" Cursor="Hand" MouseEnter="PieSlice_OnMouseEnter" MouseLeftButtonUp="PieSlice_OnMouseLeftButtonUp" />
                                     <Path x:Name="DiskSlicePath" Fill="#2F476B" Stroke="#FFFFFF" StrokeThickness="2" Cursor="Hand" MouseEnter="PieSlice_OnMouseEnter" MouseLeftButtonUp="PieSlice_OnMouseLeftButtonUp" />
                                 </Canvas>
-                                <Ellipse Width="122" Height="122" Fill="#FFFFFF" Stroke="#E5E7EB" StrokeThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Ellipse Width="80" Height="80" Fill="#FFFFFF" Stroke="#E5E7EB" StrokeThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                     <TextBlock Text="当前设备" FontSize="13" Foreground="#6B7280" HorizontalAlignment="Center" />
                                     <TextBlock x:Name="SelectedDeviceText" Text="设备1" FontSize="17" Foreground="#111827" FontWeight="SemiBold" HorizontalAlignment="Center" />
                                 </StackPanel>
                             </Grid>
 
-                            <StackPanel Grid.Column="1" Margin="18,24,0,0">
+                            <StackPanel Grid.Column="1" Margin="18,0,0,0">
                                 <Border Background="#F1F5F9" BorderBrush="#DCE3EE" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
                                     <TextBlock x:Name="PieDetailText" Text="悬浮或点击饼图扇区查看详情" FontSize="14" Foreground="#334155" />
                                 </Border>
-                                <Border Background="#F8FAFC" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <Border Background="#F8FAFC" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="16,12" Margin="0,0,0,12" MinHeight="54">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16" />
-                                            <ColumnDefinition Width="84" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="92" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Rectangle Grid.Column="0" Width="12" Height="12" Fill="#4F86F7" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Text="CPU" FontSize="16" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                        <TextBlock Grid.Column="1" Text="CPU" FontSize="18" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
                                         <TextBlock x:Name="CpuUsageText" Grid.Column="2" Text="0.00%" FontSize="22" Foreground="#4F86F7" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     </Grid>
                                 </Border>
 
-                                <Border Background="#F8FAFC" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,10">
+                                <Border Background="#F8FAFC" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="16,12" Margin="0,0,0,12" MinHeight="54">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16" />
-                                            <ColumnDefinition Width="84" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="92" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Rectangle Grid.Column="0" Width="12" Height="12" Fill="#FF7A00" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Text="内存" FontSize="16" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                        <TextBlock Grid.Column="1" Text="内存" FontSize="18" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
                                         <TextBlock x:Name="MemoryUsageText" Grid.Column="2" Text="0.00%" FontSize="22" Foreground="#FF7A00" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     </Grid>
                                 </Border>
 
-                                <Border Background="#F8FAFC" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="12">
+                                <Border Background="#F8FAFC" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="16,12" MinHeight="54">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16" />
-                                            <ColumnDefinition Width="84" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="92" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Rectangle Grid.Column="0" Width="12" Height="12" Fill="#2F476B" VerticalAlignment="Center" />
-                                        <TextBlock Grid.Column="1" Text="磁盘" FontSize="16" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                        <TextBlock Grid.Column="1" Text="磁盘" FontSize="18" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0" />
                                         <TextBlock x:Name="DiskUsageText" Grid.Column="2" Text="0.00%" FontSize="22" Foreground="#2F476B" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Left" />
                                     </Grid>
                                 </Border>
                             </StackPanel>
                         </Grid>
 
-                        <Border Grid.Row="4" BorderBrush="#E3E8EF" BorderThickness="1" CornerRadius="6" Padding="0" Background="#FFFFFF">
+                        <Border Grid.Row="3" BorderBrush="#E3E8EF" BorderThickness="1" CornerRadius="6" Padding="0" Background="#FFFFFF">
                             <DataGrid x:Name="DeviceImageGrid"
                                       AutoGenerateColumns="False"
                                       CanUserAddRows="False"
-                                      IsReadOnly="True"
+                                      IsReadOnly="False"
+                                      CellEditEnding="DeviceImageGrid_OnCellEditEnding"
+                                      SelectionMode="Single"
+                                      SelectionUnit="FullRow"
                                       HeadersVisibility="Column"
                                       GridLinesVisibility="Horizontal"
                                       RowBackground="#FFFFFF"
                                       AlternatingRowBackground="#F8FAFC"
                                       BorderThickness="0">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                        <EventSetter Event="PreviewMouseRightButtonDown" Handler="DeviceImageGridRow_OnPreviewMouseRightButtonDown" />
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="修改Name" Click="DeviceImageModifyNameMenuItem_OnClick" />
+                                        <MenuItem Header="修改Tag" Click="DeviceImageModifyTagMenuItem_OnClick" />
+                                        <MenuItem Header="删除镜像" Click="DeviceImageDeleteMenuItem_OnClick" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="镜像中文名称" Width="160" Binding="{Binding ChineseName}" />
-                                    <DataGridTextColumn Header="REPOSITORY" Width="240" Binding="{Binding Repository}" />
-                                    <DataGridTextColumn Header="TAG" Width="95" Binding="{Binding Tag}" />
-                                    <DataGridTextColumn Header="CREATED" Width="165" Binding="{Binding Created}" />
-                                    <DataGridTextColumn Header="SIZE" Width="110" Binding="{Binding Size}" />
-                                    <DataGridTextColumn Header="LABELS" Width="*" Binding="{Binding Labels}" />
-                                    <DataGridTextColumn Header="IMAGE ID" Width="250" Binding="{Binding ImageId}" />
+                                    <DataGridTextColumn Header="中文名" Width="*" Binding="{Binding ChineseName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                                    <DataGridTextColumn Header="Name" Width="*" Binding="{Binding Name}" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="Tag" Width="*" Binding="{Binding Tag}" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="Created" Width="*" Binding="{Binding Created}" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="Size" Width="*" Binding="{Binding Size}" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="Image ID" Width="*" Binding="{Binding ImageId}" IsReadOnly="True" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Border>
@@ -266,208 +393,96 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="0" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <DockPanel Grid.Row="0" Margin="0,0,0,12">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="边缘终端最大内存阈值：" FontSize="16" Foreground="#111827" VerticalAlignment="Center" />
-                                <TextBox x:Name="EdgeMemoryThresholdTextBox"
-                                         Width="120"
-                                         Height="30"
-                                         Margin="8,0,6,0"
-                                         VerticalContentAlignment="Center"
-                                         Text="2048" />
-                                <TextBlock Text="MB" FontSize="15" Foreground="#374151" VerticalAlignment="Center" />
-                            </StackPanel>
-                            <Button DockPanel.Dock="Right"
-                                    Content="预部署镜像生成"
-                                    MinWidth="150"
-                                    Padding="18,6"
-                                    Background="#111827"
+                        <StackPanel Grid.Row="0" Margin="0,0,0,10" Orientation="Vertical" Visibility="Collapsed">
+                            <Button x:Name="StrategyReadDiskButton"
+                                    Content="读取磁盘上限"
+                                    MinWidth="118"
+                                    Height="30"
+                                    Padding="10,0"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,0,0,6"
+                                    Background="#1F2937"
                                     Foreground="White"
-                                    BorderBrush="#111827"
-                                    Cursor="Hand" />
-                        </DockPanel>
+                                    BorderBrush="#1F2937"
+                                    Cursor="Hand"
+                                    Click="StrategyReadDiskButton_OnClick" />
+                            <TextBlock x:Name="StrategyDiskMaxSpaceText"
+                                       Text="磁盘最大空间：未读取磁盘上限"
+                                       FontSize="14"
+                                       Foreground="#334155"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
 
-                        <TextBlock Grid.Row="1" Text="预部署镜像：" FontSize="18" FontWeight="SemiBold" Foreground="#111827" Margin="2,0,0,8" />
-
-                        <Border Grid.Row="2" BorderBrush="#D1D5DB" BorderThickness="1" Background="#FAFAFA">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10">
-                                <ItemsControl x:Name="StrategyImageItemsControl">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Width="286" Height="150" Margin="8" Padding="12" Background="White" BorderBrush="#9CA3AF" BorderThickness="1">
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Name}" FontSize="22" FontWeight="SemiBold" Foreground="#111827" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                                                    <TextBlock Text="{Binding Id, StringFormat=ID: {0}}" FontSize="16" Foreground="#1F2937" Margin="0,0,0,4" />
-                                                    <TextBlock Text="{Binding Created, StringFormat=创建: {0}}" FontSize="16" Foreground="#1F2937" Margin="0,0,0,4" />
-                                                    <TextBlock Text="{Binding Size, StringFormat=大小: {0}}" FontSize="16" Foreground="#1F2937" />
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </Border>
-
-                        <DockPanel Grid.Row="3" Margin="0,12,0,0">
-                            <Button DockPanel.Dock="Right"
-                                    Content="一键部署"
-                                    MinWidth="120"
-                                    Padding="18,6"
-                                    Background="#E5E7EB"
-                                    Foreground="#111827"
-                                    BorderBrush="#9CA3AF"
-                                    Cursor="Hand" />
-                        </DockPanel>
-                    </Grid>
-                </Border>
-
-                <Border x:Name="ServiceImagePanel"
-                        Grid.RowSpan="2"
-                        Background="#FFFFFF"
-                        CornerRadius="8"
-                        BorderBrush="#D1D5DB"
-                        BorderThickness="1"
-                        Padding="12"
-                        Visibility="Collapsed">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.25*" />
-                            <ColumnDefinition Width="1.1*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-
-                        <Grid Grid.Column="0" Margin="0,0,10,0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="10" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-
-                            <Border Grid.Row="0" BorderBrush="#9CA3AF" BorderThickness="1" CornerRadius="4" Padding="6" Background="#FCFCFD">
-                                <DataGrid x:Name="SourceImageGrid"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          IsReadOnly="True"
-                                          HeadersVisibility="Column"
-                                          GridLinesVisibility="Horizontal"
-                                          RowBackground="#FFFFFF"
-                                          AlternatingRowBackground="#F8FAFC"
-                                          BorderThickness="0">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="仓库:Tag" Width="170" Binding="{Binding RepoTag}" />
-                                        <DataGridTextColumn Header="镜像ID" Width="160" Binding="{Binding ImageId}" />
-                                        <DataGridTextColumn Header="创建时间" Width="170" Binding="{Binding Created}" />
-                                        <DataGridTextColumn Header="大小(MB)" Width="120" Binding="{Binding SizeMb}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </Border>
-
-                            <Border Grid.Row="2" BorderBrush="#9CA3AF" BorderThickness="1" CornerRadius="4" Padding="6" Background="#FCFCFD">
-                                <DataGrid x:Name="PreparedImageGrid"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          IsReadOnly="True"
-                                          HeadersVisibility="Column"
-                                          GridLinesVisibility="Horizontal"
-                                          RowBackground="#FFFFFF"
-                                          AlternatingRowBackground="#F8FAFC"
-                                          BorderThickness="0">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="仓库:Tag" Width="170" Binding="{Binding RepoTag}" />
-                                        <DataGridTextColumn Header="镜像ID" Width="160" Binding="{Binding ImageId}" />
-                                        <DataGridTextColumn Header="创建时间" Width="170" Binding="{Binding Created}" />
-                                        <DataGridTextColumn Header="大小(MB)" Width="120" Binding="{Binding SizeMb}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </Border>
-                        </Grid>
-
-                        <Grid Grid.Column="1">
+                        <Grid Grid.Row="1" Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="260" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="120" />
                             </Grid.ColumnDefinitions>
-
-                            <Border Grid.Column="0" BorderBrush="#9CA3AF" BorderThickness="1" CornerRadius="4" Padding="6" Background="#FCFCFD">
-                                <DataGrid x:Name="ProgramFileGrid"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          IsReadOnly="True"
-                                          HeadersVisibility="Column"
-                                          GridLinesVisibility="Horizontal"
-                                          RowBackground="#FFFFFF"
-                                          AlternatingRowBackground="#F8FAFC"
-                                          BorderThickness="0">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="程序名" Width="*" Binding="{Binding Name}" />
-                                        <DataGridTextColumn Header="大小" Width="120" Binding="{Binding Size}" />
-                                        <DataGridTextColumn Header="修改时间" Width="170" Binding="{Binding ModifiedAt}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </Border>
-
-                            <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Top">
-                                <Button Content="拷贝镜像" Height="56" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                                <Button Content="暂存" Height="56" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                                <Button Content="发布" Height="56" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                                <Button Content="优化" Height="56" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            </StackPanel>
+                            <TextBlock Grid.Column="0" Text="设备：" FontSize="15" Foreground="#111827" VerticalAlignment="Center" />
+                            <ComboBox x:Name="StrategyDeviceSelector"
+                                      Grid.Column="1"
+                                      Height="30"
+                                      Margin="8,0,12,0"
+                                      VerticalContentAlignment="Center"
+                                      SelectionChanged="StrategyDeviceSelector_OnSelectionChanged" />
                         </Grid>
-                    </Grid>
-                </Border>
 
-                <Border x:Name="ServiceContainerPanel"
-                        Grid.RowSpan="2"
-                        Background="#FFFFFF"
-                        CornerRadius="8"
-                        BorderBrush="#D1D5DB"
-                        BorderThickness="1"
-                        Padding="12"
-                        Visibility="Collapsed">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="120" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="10" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="2" Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="边缘终端最大内存阈值：" FontSize="15" Foreground="#111827" VerticalAlignment="Center" />
+                            <TextBox x:Name="EdgeMemoryThresholdTextBox"
+                                     Grid.Column="1"
+                                     Height="30"
+                                     Margin="8,0,6,0"
+                                     VerticalContentAlignment="Center"
+                                     Text="0"
+                                     TextChanged="StrategyThresholdInput_OnChanged" />
+                            <TextBlock Grid.Column="2" Text="MB" FontSize="15" Foreground="#374151" VerticalAlignment="Center" />
+                            <Slider x:Name="StrategyPercentSlider"
+                                    Grid.Column="3"
+                                    Margin="18,0,12,0"
+                                    Minimum="0"
+                                    Maximum="100"
+                                    Value="0"
+                                    TickFrequency="5"
+                                    IsSnapToTickEnabled="True"
+                                    ValueChanged="StrategyThresholdInput_OnChanged" />
+                            <TextBlock Grid.Column="4" Text="百分比：" FontSize="15" Foreground="#111827" VerticalAlignment="Center" />
+                            <TextBlock x:Name="StrategyPercentValueText"
+                                       Grid.Column="5"
+                                       Text="0%"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Foreground="#0F172A"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="StrategyComputedThresholdText"
+                                       Grid.Column="6"
+                                       Text="策略阈值：0 MB"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Foreground="#0F172A"
+                                       VerticalAlignment="Center" />
+                        </Grid>
 
-                        <Border Grid.ColumnSpan="2" Background="#F8FAFC" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="4" Padding="10">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="选择终端" FontSize="15" Foreground="#1F2937" VerticalAlignment="Center" />
-                                <ComboBox x:Name="ContainerDeviceSelector"
-                                          Width="260"
-                                          Height="30"
-                                          Margin="10,0,0,0"
-                                          Background="#F3F4F6"
-                                          BorderBrush="#C7CDD4"
-                                          BorderThickness="1"
-                                          Foreground="#111827" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border Grid.Row="2"
-                                Grid.Column="0"
-                                BorderBrush="#9CA3AF"
-                                BorderThickness="1"
-                                CornerRadius="4"
-                                Padding="6"
-                                Background="#FCFCFD">
-                            <DataGrid x:Name="ContainerComposeGrid"
+                        <Border Grid.Row="3" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="6" Background="#FAFAFA" Padding="6" Margin="0,0,0,10" Visibility="Collapsed">
+                            <DataGrid x:Name="StrategyLogDataGrid"
                                       AutoGenerateColumns="False"
                                       CanUserAddRows="False"
                                       IsReadOnly="True"
@@ -477,27 +492,429 @@
                                       AlternatingRowBackground="#F8FAFC"
                                       BorderThickness="0">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="ID" Width="190" Binding="{Binding Id}" />
-                                    <DataGridTextColumn Header="名称" Width="210" Binding="{Binding Name}" />
-                                    <DataGridTextColumn Header="镜像" Width="220" Binding="{Binding Image}" />
-                                    <DataGridTextColumn Header="状态" Width="120" Binding="{Binding Status}" />
-                                    <DataGridTextColumn Header="详情" Width="*" Binding="{Binding Detail}" />
+                                    <DataGridTextColumn Header="镜像ID" Width="220" Binding="{Binding ImageId}" />
+                                    <DataGridTextColumn Header="镜像大小" Width="120" Binding="{Binding ImageSize}" />
+                                    <DataGridTextColumn Header="镜像使用次数" Width="130" Binding="{Binding UsageCount}" />
+                                    <DataGridTextColumn Header="镜像使用间隔" Width="130" Binding="{Binding UsageInterval}" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Border>
 
-                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Top">
-                            <Button Content="刷新" Height="52" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            <Button Content="创建容器" Height="52" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            <Button Content="启动容器" Height="52" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            <Button Content="停止容器" Height="52" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            <Button Content="重启容器" Height="52" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            <Button Content="删除容器" Height="52" Margin="0,0,0,10" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                            <Button Content="查看日志" Height="52" Background="#E5E7EB" BorderBrush="#9CA3AF" Foreground="#111827" Cursor="Hand" />
-                        </StackPanel>
+                        <Grid Grid.Row="4" Margin="0,0,0,8">
+                            <TextBlock Text="预部署镜像："
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="#111827"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+
+                        <Border Grid.Row="5" BorderBrush="#D1D5DB" BorderThickness="1" Background="#FAFAFA" Padding="6">
+                            <DataGrid x:Name="StrategyImageItemsControl"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="True"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      RowBackground="#FFFFFF"
+                                      AlternatingRowBackground="#F8FAFC"
+                                      BorderThickness="0">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Width="*" Binding="{Binding Name}" />
+                                    <DataGridTextColumn Header="Tag" Width="*" Binding="{Binding Tag}" />
+                                    <DataGridTextColumn Header="Image ID" Width="*" Binding="{Binding ImageId}" />
+                                    <DataGridTextColumn Header="Created" Width="*" Binding="{Binding Created}" />
+                                    <DataGridTextColumn Header="Size" Width="*" Binding="{Binding Size}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                        <DockPanel Grid.Row="6" Margin="0,12,0,0">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Vertical">
+                                <Button x:Name="StrategyRefreshButton"
+                                        Content="刷新"
+                                        MinWidth="120"
+                                        Padding="18,6"
+                                        Margin="0,0,0,8"
+                                        Background="#E5E7EB"
+                                        Foreground="#111827"
+                                        BorderBrush="#9CA3AF"
+                                        Cursor="Hand"
+                                        Click="StrategyRefreshButton_OnClick" />
+                                <Button x:Name="StrategyGenerateButton"
+                                        Content="预部署镜像生成"
+                                        MinWidth="120"
+                                        Padding="18,6"
+                                        Margin="0,0,0,8"
+                                        Background="#E5E7EB"
+                                        Foreground="#111827"
+                                        BorderBrush="#9CA3AF"
+                                        Cursor="Hand"
+                                        Click="StrategyGenerateButton_OnClick" />
+                                <Button x:Name="StrategyDeployButton"
+                                        Content="一键部署"
+                                        MinWidth="120"
+                                        Padding="18,6"
+                                        Background="#E5E7EB"
+                                        Foreground="#111827"
+                                        BorderBrush="#9CA3AF"
+                                        Cursor="Hand"
+                                        Click="StrategyDeployButton_OnClick" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="ServiceImagePanel"
+                        Grid.RowSpan="2"
+                        Background="#F9FBFF"
+                        CornerRadius="12"
+                        BorderBrush="#D6E2F1"
+                        BorderThickness="1"
+                        Padding="14"
+                        MinHeight="760"
+                        Visibility="Collapsed">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="0" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#D9E4F2" BorderThickness="1" CornerRadius="10" Padding="10">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="◧" FontSize="14" Foreground="#4A6FA5" VerticalAlignment="Center" />
+                                <TextBlock Text="镜像编排控制台" Margin="8,0,16,0" FontSize="16" FontWeight="SemiBold" Foreground="#1F2937" VerticalAlignment="Center" />
+                                <TextBlock Text="设备：" FontSize="14" Foreground="#334155" VerticalAlignment="Center" />
+                                <ComboBox x:Name="ServiceImageDeviceSelector"
+                                          Width="260"
+                                          Height="30"
+                                          Margin="6,0,0,0"
+                                          Background="#F3F4F6"
+                                          BorderBrush="#C7CDD4"
+                                          BorderThickness="1"
+                                          Foreground="#111827"
+                                          HorizontalContentAlignment="Left"
+                                          VerticalContentAlignment="Center"
+                                          SelectionChanged="ServiceImageDeviceSelector_OnSelectionChanged">
+                                    <ComboBox.Resources>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                                            <Setter Property="Padding" Value="8,5" />
+                                        </Style>
+                                    </ComboBox.Resources>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="2"
+                                Background="#F3F7FE"
+                                BorderBrush="#D6E2F1"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,10">
+                            <WrapPanel x:Name="ServiceImageActionPanel" Orientation="Horizontal">
+                                <Button x:Name="ServiceImageCreateButton" Content="新建镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                                <Button x:Name="ServiceImageDownloadButton" Content="下载镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                                <Button x:Name="ServiceImageDeployButton" Content="部署" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                                <Button x:Name="ServiceImagePublishButton" Content="发布" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                                <Button x:Name="ServiceImageDeleteButton" Content="删除镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                            </WrapPanel>
+                        </Border>
+
+                        <Grid Grid.Row="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.25*" />
+                                <ColumnDefinition Width="1.1*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Grid Grid.Column="0" Margin="0,0,10,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="8" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Border Grid.Row="0"
+                                        Background="#F3F7FE"
+                                        BorderBrush="#D6E2F1"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="12,8"
+                                        Margin="0,0,0,8">
+                                    <TextBlock Text="基础镜像列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" />
+                                </Border>
+
+                                <Border Grid.Row="1" BorderBrush="#D9E4F2" BorderThickness="1" CornerRadius="10" Padding="6" Background="#FFFFFF">
+                            <DataGrid x:Name="SourceImageGrid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="False"
+                                      CellEditEnding="ServiceImageGrid_OnCellEditEnding"
+                                      SelectionMode="Extended"
+                                      SelectionChanged="SourceImageGrid_OnSelectionChanged"
+                                      PreviewMouseLeftButtonDown="ToggleDataGridRowSelection_OnPreviewMouseLeftButtonDown"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      RowBackground="#FFFFFF"
+                                      AlternatingRowBackground="#F8FAFC"
+                                      BorderThickness="0">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="中文名" Width="*" Binding="{Binding ChineseName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                                            <DataGridTextColumn Header="Name" Width="*" Binding="{Binding Name}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="Tag" Width="*" Binding="{Binding Tag}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="lmage lD" Width="*" Binding="{Binding ImageId}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="Created" Width="*" Binding="{Binding Created}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="Size" Width="*" Binding="{Binding SizeMb}" IsReadOnly="True" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+
+                                <Border Grid.Row="3"
+                                        Background="#F3F7FE"
+                                        BorderBrush="#D6E2F1"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="12,8"
+                                        Margin="0,0,0,8">
+                                    <TextBlock Text="镜像列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" />
+                                </Border>
+
+                                <Border Grid.Row="4" BorderBrush="#D9E4F2" BorderThickness="1" CornerRadius="10" Padding="6" Background="#FFFFFF">
+                            <DataGrid x:Name="PreparedImageGrid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="False"
+                                      CellEditEnding="ServiceImageGrid_OnCellEditEnding"
+                                      SelectionMode="Extended"
+                                      SelectionChanged="PreparedImageGrid_OnSelectionChanged"
+                                      PreviewMouseLeftButtonDown="ToggleDataGridRowSelection_OnPreviewMouseLeftButtonDown"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      RowBackground="#FFFFFF"
+                                      AlternatingRowBackground="#F8FAFC"
+                                      BorderThickness="0">
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                                <EventSetter Event="PreviewMouseRightButtonDown" Handler="DeviceImageGridRow_OnPreviewMouseRightButtonDown" />
+                                            </Style>
+                                        </DataGrid.RowStyle>
+                                        <DataGrid.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="修改Name" Click="PreparedImageModifyNameMenuItem_OnClick" />
+                                            </ContextMenu>
+                                        </DataGrid.ContextMenu>
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="中文名" Width="*" Binding="{Binding ChineseName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                                            <DataGridTextColumn Header="Name" Width="*" Binding="{Binding Name}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="Tag" Width="*" Binding="{Binding Tag}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="lmage lD" Width="*" Binding="{Binding ImageId}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="Created" Width="*" Binding="{Binding Created}" IsReadOnly="True" />
+                                            <DataGridTextColumn Header="Size" Width="*" Binding="{Binding SizeMb}" IsReadOnly="True" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                            </Grid>
+
+                            <Grid Grid.Column="1">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Border Grid.Row="0"
+                                        Background="#F3F7FE"
+                                        BorderBrush="#D6E2F1"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="12,8"
+                                        Margin="0,0,0,8">
+                                    <TextBlock Text="运行环境列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" />
+                                </Border>
+
+                                <Border Grid.Row="1" BorderBrush="#D9E4F2" BorderThickness="1" CornerRadius="10" Padding="6" Background="#FFFFFF">
+                            <DataGrid x:Name="ProgramFileGrid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="True"
+                                      SelectionMode="Extended"
+                                      SelectionUnit="FullRow"
+                                      SelectionChanged="ProgramFileGrid_OnSelectionChanged"
+                                      PreviewMouseLeftButtonDown="ToggleDataGridRowSelection_OnPreviewMouseLeftButtonDown"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      RowBackground="#FFFFFF"
+                                      AlternatingRowBackground="#F8FAFC"
+                                      BorderThickness="0">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="程序名" Width="*" Binding="{Binding Name}" />
+                                            <DataGridTextColumn Header="大小" Width="120" Binding="{Binding Size}" />
+                                            <DataGridTextColumn Header="修改时间" Width="170" Binding="{Binding ModifiedAt}" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="ServiceContainerPanel"
+                        Grid.RowSpan="2"
+                        Background="#F9FBFF"
+                        CornerRadius="12"
+                        BorderBrush="#D6E2F1"
+                        BorderThickness="1"
+                        Padding="14"
+                        MinHeight="760"
+                        Visibility="Collapsed">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="8" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <Border Background="#FFFFFF" BorderBrush="#D9E4F2" BorderThickness="1" CornerRadius="10" Padding="10">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="设备：" FontSize="20" Foreground="#1F2937" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <ComboBox x:Name="ContainerDeviceSelector"
+                                          Width="380"
+                                          Height="30"
+                                          Margin="6,0,0,0"
+                                          Background="#F3F4F6"
+                                          BorderBrush="#C7CDD4"
+                                          BorderThickness="1"
+                                          Foreground="#111827"
+                                          HorizontalContentAlignment="Left"
+                                          VerticalContentAlignment="Center"
+                                          SelectionChanged="ContainerDeviceSelector_OnSelectionChanged">
+                                    <ComboBox.Resources>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                                            <Setter Property="VerticalContentAlignment" Value="Center" />
+                                            <Setter Property="Padding" Value="8,5" />
+                                        </Style>
+                                    </ComboBox.Resources>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="2"
+                                Background="#F3F7FE"
+                                BorderBrush="#D6E2F1"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="14,8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="容器列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="支持多选与批量操作" Margin="10,0,0,0" FontSize="13" Foreground="#5D6E86" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="4"
+                                Background="#F3F7FE"
+                                BorderBrush="#D6E2F1"
+                                BorderThickness="1,1,1,0"
+                                CornerRadius="8"
+                                Padding="12,10">
+                            <WrapPanel x:Name="ContainerActionPanel" Orientation="Horizontal">
+                                <Button Content="创建容器" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                <Button Content="压力测试" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                <Button Content="启动容器" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                <Button Content="停止容器" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                <Button Content="删除容器" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                <Button Content="查看日志" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                            <Button Content="模型部署" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                                <Button Content="算法部署" Style="{StaticResource ContainerActionButtonStyle}" Click="ContainerActionButton_OnClick" />
+                            </WrapPanel>
+                        </Border>
+
+                        <Border Grid.Row="6"
+                                BorderBrush="#D9E4F2"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="6"
+                                Background="#FFFFFF"
+                                MinHeight="560">
+                            <DataGrid x:Name="ContainerComposeGrid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="True"
+                                      SelectionMode="Extended"
+                                      SelectionUnit="FullRow"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      RowBackground="#FFFFFF"
+                                      AlternatingRowBackground="#F7FAFF"
+                                      RowHeight="42"
+                                      BorderThickness="0">
+                                <DataGrid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="修改容器名称" Click="ContainerModifyNameMenuItem_OnClick" />
+                                    </ContextMenu>
+                                </DataGrid.ContextMenu>
+                                <DataGrid.Resources>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="Background" Value="#F3F7FE" />
+                                        <Setter Property="Foreground" Value="#233044" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                        <Setter Property="BorderBrush" Value="#E3EBF6" />
+                                        <Setter Property="BorderThickness" Value="0,0,1,1" />
+                                        <Setter Property="Padding" Value="8,6" />
+                                    </Style>
+                                </DataGrid.Resources>
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <EventSetter Event="PreviewMouseRightButtonDown" Handler="ContainerComposeGridRow_OnPreviewMouseRightButtonDown" />
+                                        <Setter Property="Background" Value="#FFFFFF" />
+                                        <Setter Property="Foreground" Value="#111827" />
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="#B1ECFF" />
+                                                <Setter Property="Foreground" Value="#0F172A" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="名称" Width="170" Binding="{Binding ChineseName}" />
+                                    <DataGridTextColumn Header="镜像" Width="220" Binding="{Binding Image}" />
+                                    <DataGridTextColumn Header="状态" Width="120" Binding="{Binding Status}" />
+                                    <DataGridTextColumn Header="CPU核数量" Width="180" Binding="{Binding CpuCores}">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                <Setter Property="ToolTip" Value="{Binding CpuCores}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Header="CPU (%)" Width="90" Binding="{Binding CpuPercent}" />
+                                    <DataGridTextColumn Header="Memory (%)" Width="95" Binding="{Binding MemoryPercent}" />
+                                    <DataGridTextColumn Header="Disk read/write" Width="150" Binding="{Binding DiskReadWrite}" />
+                                    <DataGridTextColumn Header="Port(s)" Width="130" Binding="{Binding Ports}" />
+                                    <DataGridTextColumn Header="Size" Width="160" Binding="{Binding Size}" />
+                                    <DataGridTextColumn Header="详情" Width="260" Binding="{Binding Detail}" />
+                                    <DataGridTextColumn Header="ID" Width="330" Binding="{Binding Id}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
                     </Grid>
                 </Border>
             </Grid>
         </ScrollViewer>
-    </Grid>
+        </Grid>
+    </Viewbox>
 </Window>

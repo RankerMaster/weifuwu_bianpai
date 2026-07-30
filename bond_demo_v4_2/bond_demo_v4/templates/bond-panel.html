@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <script type="text/javascript" src="/static/jsscripts/vue.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/axios.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/axios.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/d3.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/d3-sankey.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/elementui/lib-master/index.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/echarts-5.3.1/dist/echarts.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/@logicflow/core/dist/logic-flow.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/@logicflow/extension/lib/Menu.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/@logicflow/extension/lib/Group.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/@logicflow/extension/lib/DndPanel.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/@logicflow/extension/lib/Snapshot.js"></script>
+    <script type="text/javascript" src="/static/jsscripts/@logicflow/extension/lib/SelectionSelect.js"></script>
+
+    <!-- 样式设置 -->
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+    <link rel="stylesheet" href="/static/jsscripts/elementui/lib-master/theme-chalk/index.css">
+    <link rel="stylesheet" href="/static/jsscripts/@logicflow/core/dist/style/index.css">
+    <!--LogicFlow extension包css-->
+    <link rel="stylesheet" href="/static/jsscripts/@logicflow/extension/lib/style/index.css">
+    <link rel="stylesheet" href="/static/jsscripts/bondComponent/css/index.css">
+
+</head>
+
+<body>
+    <div id="bond-panel" style="height: 800px; width: 100%;">
+        <ate-bond-graph />
+    </div>
+</body>
+<script type="module">
+    import { bondComp } from '/static/jsscripts/bondComponent/index.mjs'
+    var vm = new Vue({
+        el: "#bond-panel",
+        data: {
+        },
+        components: {
+            'ate-bond-graph': bondComp,
+        },
+        mounted(){
+        }
+    }) 
+</script>
+</html>
