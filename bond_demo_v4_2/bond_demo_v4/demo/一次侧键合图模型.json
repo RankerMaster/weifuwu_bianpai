@@ -1,0 +1,895 @@
+{
+    "nodes": [
+        {
+            "id": "2-18c0fd616b4",
+            "text": "一次侧阻性元件R2",
+            "type": "heat-r2-m",
+            "showConfig": {
+                "position": {
+                    "x": 390,
+                    "y": 170
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/heat-r2-m.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatR2_Prime",
+                    "params": [
+                        {
+                            "name": "水热容",
+                            "key": "C_l",
+                            "value": "4200"
+                        },
+                        {
+                            "name": "导纳系数",
+                            "key": "R_daona",
+                            "value": "0.001"
+                        }
+                    ],
+                    "width": 160,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "4-18c0fd616b4",
+            "text": "一次侧能量容性元件(C1)",
+            "type": "heat-c1-m",
+            "showConfig": {
+                "position": {
+                    "x": 810,
+                    "y": 70
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/heat-c1-m.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatC1_First",
+                    "params": [
+                        {
+                            "name": "金属壁质量",
+                            "key": "m",
+                            "value": "1000"
+                        },
+                        {
+                            "name": "热容",
+                            "key": "C_m",
+                            "value": "500"
+                        }
+                    ],
+                    "width": 220,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "6-18c0fd616b4",
+            "text": "一次侧阻性元件(R1)",
+            "type": "heat-r1-first",
+            "showConfig": {
+                "position": {
+                    "x": 790,
+                    "y": 10
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/heat-r1-first.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatR1_First",
+                    "params": [
+                        {
+                            "name": "修正系数",
+                            "key": "myalpha",
+                            "value": "0.38"
+                        },
+                        {
+                            "name": "对流热换系数",
+                            "key": "K",
+                            "value": "100"
+                        },
+                        {
+                            "name": "一次侧面积",
+                            "key": "A",
+                            "value": "5429"
+                        }
+                    ],
+                    "width": 180,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "8-18c0fd616b4",
+            "text": "共势结",
+            "type": "heat-e-node",
+            "showConfig": {
+                "position": {
+                    "x": 570,
+                    "y": 170
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/heat-e-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatENote",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "a-18c0fd616b4",
+            "text": "共势结",
+            "type": "heat-e-node",
+            "showConfig": {
+                "position": {
+                    "x": 570,
+                    "y": 280
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/heat-e-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatENote",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "c-18c0fd616b4",
+            "text": "共流结",
+            "type": "heat-f-node",
+            "showConfig": {
+                "position": {
+                    "x": 570,
+                    "y": 70
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/base-f-node.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatFNode",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "e-18c0fd616b4",
+            "text": "P",
+            "type": "base-e-source",
+            "showConfig": {
+                "position": {
+                    "x": 210,
+                    "y": 220
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-source.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseESource",
+                    "params": [
+                        {
+                            "name": "势源值",
+                            "key": "source_e2",
+                            "value": 1
+                        }
+                    ],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "10-18c0fd616b4",
+            "text": "T",
+            "type": "base-e-source",
+            "showConfig": {
+                "position": {
+                    "x": 210,
+                    "y": 130
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-source.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseESource",
+                    "params": [
+                        {
+                            "name": "势源值",
+                            "key": "source_e2",
+                            "value": 1
+                        }
+                    ],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "12-18c0fd616b4",
+            "text": "势探测器",
+            "type": "base-e-detect",
+            "showConfig": {
+                "position": {
+                    "x": 750,
+                    "y": 360
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-detect.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseEDetect",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": [
+                        {
+                            "label": "势",
+                            "data": [
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "14-18c0fd616b4",
+            "text": "势探测器",
+            "type": "base-e-detect",
+            "showConfig": {
+                "position": {
+                    "x": 750,
+                    "y": 180
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-e-detect.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseEDetect",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": [
+                        {
+                            "label": "势",
+                            "data": [
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "16-18c0fd616b4",
+            "text": "阻抗(物质出口)",
+            "type": "base-r",
+            "showConfig": {
+                "position": {
+                    "x": 780,
+                    "y": 300
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-r.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseR",
+                    "params": [
+                        {
+                            "name": "阻值",
+                            "key": "R",
+                            "value": "140000"
+                        }
+                    ],
+                    "width": 160,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "18-18c0fd616b4",
+            "text": "阻抗(能量出口)",
+            "type": "base-r",
+            "showConfig": {
+                "position": {
+                    "x": 780,
+                    "y": 120
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-r.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseR",
+                    "params": [
+                        {
+                            "name": "阻值",
+                            "key": "R",
+                            "value": "0.000002"
+                        }
+                    ],
+                    "width": 160,
+                    "ui": "node-red",
+                    "scopedata": []
+                }
+            }
+        },
+        {
+            "id": "1a-18c0fd616b4",
+            "text": "流探测器",
+            "type": "base-f-detect",
+            "showConfig": {
+                "position": {
+                    "x": 750,
+                    "y": -50
+                },
+                "properties": {
+                    "icon": "/static/images/baseSystem/base-f-detect.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "baseSystem/BaseFDetect",
+                    "params": [],
+                    "width": 100,
+                    "ui": "node-red",
+                    "scopedata": [
+                        {
+                            "label": "流",
+                            "data": [
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "060ecbe1-f39f-490c-a309-fcc9491c8f07",
+            "text": "一次侧耦合容性元件",
+            "type": "heat-c2-E",
+            "showConfig": {
+                "position": {
+                    "x": 790,
+                    "y": 240
+                },
+                "properties": {
+                    "icon": "/static/images/heatmodule/heat-c2-E.png",
+                    "typeColor": "#ffffff",
+                    "componentName": "heatmodule/HeatC2_First",
+                    "params": [
+                        {
+                            "name": "腔体积",
+                            "key": "V",
+                            "value": "10000"
+                        },
+                        {
+                            "name": "密度ρ对压强偏导值",
+                            "key": "dRhodP_map",
+                            "value": 1,
+                            "isFunc": true
+                        },
+                        {
+                            "name": "密度ρ对温度偏导值",
+                            "key": "dRhodT_map",
+                            "value": 1,
+                            "isFunc": true
+                        },
+                        {
+                            "name": "密度值",
+                            "key": "Rho_map",
+                            "value": 1,
+                            "isFunc": true
+                        }
+                    ],
+                    "width": 180,
+                    "ui": "node-red"
+                }
+            }
+        }
+    ],
+    "edges": [
+        {
+            "id": "10-18c0fd616b4-2-18c0fd616b4-23-18c0fd616b5",
+            "from": "10-18c0fd616b4",
+            "to": "2-18c0fd616b4",
+            "fromName": "T",
+            "toName": "一次侧阻性元件R2",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 260,
+                    "y": 130
+                },
+                "endAnchor": {
+                    "x": 310,
+                    "y": 156.66666666666666
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "17eb4b32-cec1-4546-b026-215d0871dd85",
+            "from": "a-18c0fd616b4",
+            "to": "060ecbe1-f39f-490c-a309-fcc9491c8f07",
+            "fromName": "共势结",
+            "toName": "一次侧耦合容性元件",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 280
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 255
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "19301562-d1ef-48bc-8a44-eee9069b80b3",
+            "from": "8-18c0fd616b4",
+            "to": "060ecbe1-f39f-490c-a309-fcc9491c8f07",
+            "fromName": "共势结",
+            "toName": "一次侧耦合容性元件",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 170
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 225
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "2-18c0fd616b4-8-18c0fd616b4-25-18c0fd616b5",
+            "from": "2-18c0fd616b4",
+            "to": "8-18c0fd616b4",
+            "fromName": "一次侧阻性元件R2",
+            "toName": "共势结",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 470,
+                    "y": 170
+                },
+                "endAnchor": {
+                    "x": 520,
+                    "y": 170
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "2-18c0fd616b4-a-18c0fd616b4-27-18c0fd616b5",
+            "from": "2-18c0fd616b4",
+            "to": "a-18c0fd616b4",
+            "fromName": "一次侧阻性元件R2",
+            "toName": "共势结",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 470,
+                    "y": 190
+                },
+                "endAnchor": {
+                    "x": 520,
+                    "y": 280
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "2-18c0fd616b4-c-18c0fd616b4-29-18c0fd616b5",
+            "from": "2-18c0fd616b4",
+            "to": "c-18c0fd616b4",
+            "fromName": "一次侧阻性元件R2",
+            "toName": "共流结",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 470,
+                    "y": 150
+                },
+                "endAnchor": {
+                    "x": 520,
+                    "y": 70
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "8-18c0fd616b4-14-18c0fd616b4-2b-18c0fd616b5",
+            "from": "8-18c0fd616b4",
+            "to": "14-18c0fd616b4",
+            "fromName": "共势结",
+            "toName": "势探测器",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 170
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 180
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "8-18c0fd616b4-18-18c0fd616b4-2d-18c0fd616b5",
+            "from": "8-18c0fd616b4",
+            "to": "18-18c0fd616b4",
+            "fromName": "共势结",
+            "toName": "阻抗(能量出口)",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 170
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 120
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "a-18c0fd616b4-12-18c0fd616b4-31-18c0fd616b5",
+            "from": "a-18c0fd616b4",
+            "to": "12-18c0fd616b4",
+            "fromName": "共势结",
+            "toName": "势探测器",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 280
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 360
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "a-18c0fd616b4-16-18c0fd616b4-33-18c0fd616b5",
+            "from": "a-18c0fd616b4",
+            "to": "16-18c0fd616b4",
+            "fromName": "共势结",
+            "toName": "阻抗(物质出口)",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 280
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 300
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "c-18c0fd616b4-1a-18c0fd616b4-35-18c0fd616b5",
+            "from": "c-18c0fd616b4",
+            "to": "1a-18c0fd616b4",
+            "fromName": "共流结",
+            "toName": "流探测器",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 70
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": -50
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "c-18c0fd616b4-4-18c0fd616b4-37-18c0fd616b5",
+            "from": "c-18c0fd616b4",
+            "to": "4-18c0fd616b4",
+            "fromName": "共流结",
+            "toName": "一次侧能量容性元件(C1)",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 70
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 70
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "c-18c0fd616b4-6-18c0fd616b4-39-18c0fd616b5",
+            "from": "c-18c0fd616b4",
+            "to": "6-18c0fd616b4",
+            "fromName": "共流结",
+            "toName": "一次侧阻性元件(R1)",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 620,
+                    "y": 70
+                },
+                "endAnchor": {
+                    "x": 700,
+                    "y": 10
+                },
+                "properties": {}
+            }
+        },
+        {
+            "id": "e-18c0fd616b4-2-18c0fd616b4-21-18c0fd616b5",
+            "from": "e-18c0fd616b4",
+            "to": "2-18c0fd616b4",
+            "fromName": "P",
+            "toName": "一次侧阻性元件R2",
+            "type": "custom-edge",
+            "showConfig": {
+                "startAnchor": {
+                    "x": 260,
+                    "y": 220
+                },
+                "endAnchor": {
+                    "x": 310,
+                    "y": 183.33333333333334
+                },
+                "properties": {}
+            }
+        }
+    ]
+}

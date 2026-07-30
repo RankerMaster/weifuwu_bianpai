@@ -15,6 +15,21 @@
 # Rider
 .idea/
 
+# Python
+__pycache__/
+*.py[cod]
+
+# Node.js
+node_modules/
+
+# Local generated workspaces
+*.bak
+dockerbuild_workspace/strategy_logs/
+dockerbuild_workspace/tempBuild_image/
+dockerbuild_workspace/program_package/temp_mxd.txt
+outputs/tmp/
+outputs/docx_render_microservice_manual/
+
 # NuGet
 *.nupkg
 packages/

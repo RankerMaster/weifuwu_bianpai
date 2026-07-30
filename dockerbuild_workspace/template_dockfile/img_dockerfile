@@ -1,0 +1,76 @@
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+#完全替换为阿里云源
+RUN echo "deb http://mirrors.aliyun.com/ubuntu/ focal main restricted universe multiverse" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.aliyun.com/ubuntu/ focal-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.aliyun.com/ubuntu/ focal-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.aliyun.com/ubuntu/ focal-security main restricted universe multiverse" >> /etc/apt/sources.list
+    
+RUN apt-get update && apt-get install -y \
+    systemctl \
+    psmisc \
+    vim \
+    gcc \
+    g++ \
+    nano \
+    build-essential \
+    net-tools \
+    python3.8-dev \
+    libssl-dev \
+    openssl \
+    curl \
+    git \
+    make \
+    cmake \
+    expect \
+    unzip \
+    libgtk2.0-0 \
+    libx11-6 \
+    libsm6 \
+    libice6 \
+    libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+#拷贝CASS引擎相关文件
+COPY xenomai.tar.gz /home
+COPY img_engine.tar.gz /home
+COPY img_lib.tar.gz /home
+RUN tar -zxf /home/img_engine.tar.gz -C /home && \
+    tar -zxf /home/img_lib.tar.gz -C /home && \
+    tar -zxf /home/xenomai.tar.gz -C /usr && \
+    # ==================================================
+    rm -rf /home/img_engine.tar.gz && \
+    rm -rf /home/img_lib.tar.gz && \
+# 5. 配置系统库路径（包含所有 CASS-Lib + xenomai）
+    echo "/home/CASS-Lib"                  >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib/cameralib"        >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib/casslib-x86"      >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib/libevent"         >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib/mqttlib-x86"      >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib/opencvlib-x86"    >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib-ST"               >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib-ST/cameralib"     >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib-ST/casslib-x86"   >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib-ST/libevent"      >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib-ST/mqttlib-x86"   >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/home/CASS-Lib-ST/opencvlib-x86" >> /etc/ld.so.conf.d/cass.conf && \
+    echo "/usr/xenomai/lib"                >> /etc/ld.so.conf.d/cass.conf && \
+# 6. 刷新系统库缓存
+    ldconfig
+    
+#设置工作目录
+WORKDIR /home
+
+#暴露端口
+#EXPOSE 3221/tcp
+#EXPOSE 3222/udp
+
+# 启动容器时自动执行 publish.sh 并保持容器终端
+WORKDIR /home/Cass-ePLC-3.15
+CMD ["./Boot"]
+
