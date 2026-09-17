@@ -44,3 +44,8 @@ packages/
 # OS files
 .DS_Store
 Thumbs.db
+/容器间最小通信延迟测试方法.md
+/迁移
+/WpfApp1/obj_codex/Debug
+/tools
+/智能组件及接口示例.zip
