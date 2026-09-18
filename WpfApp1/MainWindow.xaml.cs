@@ -33,8 +33,8 @@ namespace WpfApp1
         private string _lastOperatedContextName = string.Empty;
         private readonly List<ContainerOperationLog> _containerOperationLogs = new List<ContainerOperationLog>();
         private string _readLocalIp = string.Empty;
-        private string _readTargetUser = string.Empty;
-        private string _readTargetIp = string.Empty;
+        private string _readTargetUser = "root";
+        private string _readTargetIp = "192.168.118.88";
         private readonly HashSet<string> _readTargetIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _sshPasswordByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastSshErrorByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
