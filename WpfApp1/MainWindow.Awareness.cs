@@ -8,7 +8,7 @@ namespace WpfApp1
         {
             ShowDashboardPanel();
             SetSidebarSelected("Awareness");
-            _ = RefreshRuntimeDataBindingsAsync(false, false);
+            _ = RefreshRuntimeDataBindingsAsync(false);
         }
 
         private void ShowDashboardPanel()

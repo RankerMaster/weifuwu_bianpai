@@ -445,7 +445,7 @@ namespace WpfApp1
 
         /// <summary>
         /// 刷新设备、镜像和资源数据，并重新绑定相关界面控件。
-        /// 此重载使用轻量模式，不主动读取容器明细，适用于普通或定时刷新。
+        /// 此重载使用轻量容器汇总模式，不主动读取容器明细，适用于普通或定时刷新。
         /// </summary>
         /// <param name="force">
         /// 为 <see langword="true"/> 时忽略一秒内的快照缓存并重新读取；
@@ -453,8 +453,8 @@ namespace WpfApp1
         /// </param>
         private async Task RefreshRuntimeDataBindingsAsync(bool force)
         {
-            // 普通刷新仅更新设备、镜像等基础数据，现有容器明细由 ApplyDockerSnapshot 保留。
-            await RefreshRuntimeDataBindingsAsync(force, false);
+            // 普通刷新只查询运行中容器的汇总指标，现有容器明细由 ApplyDockerSnapshot 保留。
+            await RefreshRuntimeDataBindingsAsync(force, ContainerReadMode.LightweightSummary);
         }
 
         /// <summary>
@@ -462,10 +462,10 @@ namespace WpfApp1
         /// 然后重新绑定仪表盘、服务镜像和容器页面，同时尽量保留用户当前选择的设备。
         /// </summary>
         /// <param name="force">是否强制绕过一秒快照缓存；该参数不会绕过正在执行的刷新任务。</param>
-        /// <param name="includeContainerData">
-        /// 是否同时读取并替换容器明细；为 <see langword="false"/> 时保留已有容器列表及设备资源指标。
+        /// <param name="containerReadMode">
+        /// 容器数据读取模式：轻量模式只读取运行中容器汇总，完整模式读取并替换容器明细。
         /// </param>
-        private async Task RefreshRuntimeDataBindingsAsync(bool force, bool includeContainerData)
+        private async Task RefreshRuntimeDataBindingsAsync(bool force, ContainerReadMode containerReadMode)
         {
             // 数据源重新绑定会重建设备选择器，因此刷新前先记录三个页面当前选中的设备名称。
             var selectedContainerDevice = GetSelectedContainerDeviceName();
@@ -501,7 +501,7 @@ namespace WpfApp1
                 var snapshot = await Task.Run(() =>
                 {
                     DockerRuntimeSnapshot localSnapshot;
-                    return TryReadDockerSnapshot(out localSnapshot, _readLocalIp, _readTargetIps, includeContainerData) ? localSnapshot : null;
+                    return TryReadDockerSnapshot(out localSnapshot, _readLocalIp, _readTargetIps, containerReadMode) ? localSnapshot : null;
                 });
 
                 if (snapshot != null)
@@ -863,8 +863,8 @@ namespace WpfApp1
 
                 setReadProgress(56, "拉取镜像与资源", "正在拉取远程镜像与资源指标数据...");
 
-                // 强制读取最新快照，并包含容器明细；结果会同步到设备、镜像和容器集合及界面。
-                await RefreshRuntimeDataBindingsAsync(true, true);
+                // 首次读取使用轻量容器汇总：保留镜像和 Docker 磁盘信息，不预取容器明细。
+                await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
                 if (operationCanceled)
                 {
                     return;
@@ -891,7 +891,7 @@ namespace WpfApp1
                     else
                     {
                         // 仍有其他目标时重新生成快照，使界面只展示剩余有效设备的数据。
-                        await RefreshRuntimeDataBindingsAsync(true, true);
+                        await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
                     }
 
                     progressClosedByCode = true;
@@ -1869,7 +1869,7 @@ namespace WpfApp1
                     await WaitForRuntimeRefreshIdleAsync(10000);
                 }
 
-                await RefreshRuntimeDataBindingsAsync(true, true);
+                await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
             }
             finally
             {
@@ -2217,33 +2217,6 @@ namespace WpfApp1
         private void ApplyDockerSnapshot(DockerRuntimeSnapshot snapshot)
         {
             var devices = snapshot.Devices;
-            if (!snapshot.IncludeContainerData && _devices.Count > 0)
-            {
-                devices = snapshot.Devices
-                    .Select(device =>
-                    {
-                        var existing = _devices.FirstOrDefault(d =>
-                            (!string.IsNullOrWhiteSpace(device.ContextName) &&
-                             string.Equals(d.ContextName, device.ContextName, StringComparison.OrdinalIgnoreCase)) ||
-                            (!string.IsNullOrWhiteSpace(device.Ip) &&
-                             string.Equals(d.Ip, device.Ip, StringComparison.OrdinalIgnoreCase)) ||
-                            string.Equals(d.Name, device.Name, StringComparison.OrdinalIgnoreCase));
-
-                        return existing == null
-                            ? device
-                            : new DeviceInfo(
-                                device.Name,
-                                device.Ip,
-                                existing.CpuUsage,
-                                existing.MemoryUsage,
-                                existing.DiskUsage,
-                                device.ImageCount,
-                                device.ContainerCount,
-                                device.ContextName);
-                    })
-                    .ToList();
-            }
-
             _devices.Clear();
             _devices.AddRange(devices);
 
@@ -2259,7 +2232,7 @@ namespace WpfApp1
             _programFiles.Clear();
             _programFiles.AddRange(snapshot.ProgramFiles);
 
-            if (snapshot.IncludeContainerData)
+            if (snapshot.ContainerReadMode == ContainerReadMode.FullDetails)
             {
                 _containerRows.Clear();
                 _containerRows.AddRange(snapshot.ContainerRows);
@@ -2404,7 +2377,7 @@ namespace WpfApp1
             return fallbackCreatedAt ?? string.Empty;
         }
 
-        private bool TryReadDockerSnapshot(out DockerRuntimeSnapshot snapshot, string localIp, IEnumerable<string> targetIps, bool includeContainerData)
+        private bool TryReadDockerSnapshot(out DockerRuntimeSnapshot snapshot, string localIp, IEnumerable<string> targetIps, ContainerReadMode containerReadMode)
         {
             snapshot = null;
 
@@ -2479,41 +2452,50 @@ namespace WpfApp1
                 deviceIndex++;
 
                 var images = ReadDockerImages(context.Name);
-                var containers = includeContainerData
-                    ? ReadDockerContainers(context.Name)
-                    : new List<DockerContainerInfo>();
-                var containerStats = includeContainerData
-                    ? ReadDockerContainerStats(context.Name)
-                    : new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
-                var diskUsage = includeContainerData
-                    ? ReadDockerRootDiskUsagePercent(context.Name)
-                    : 0;
-                var hostCpuLimitText = includeContainerData ? ReadHostCpuLimitText(context.Name) : "-";
-                var hostMemoryTotalMb = includeContainerData ? ReadHostMemoryLimitMb(context.Name) : 0;
+                var containers = new List<DockerContainerInfo>();
+                var containerStats = new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
+                var hostCpuLimitText = "-";
+                var cpuUsage = 0d;
+                var memoryUsage = 0d;
+                var runningCount = 0;
 
-                var cpuUsage = includeContainerData
-                    ? CalculateContainerCpuUsagePercent(containerStats.Values, hostCpuLimitText)
-                    : 0;
-                var memoryUsage = includeContainerData
-                    ? CalculateContainerMemoryUsagePercent(containerStats.Values, hostMemoryTotalMb)
-                    : 0;
-                if (!includeContainerData)
+                if (containerReadMode == ContainerReadMode.FullDetails)
                 {
-                    double hostCpuUsage;
-                    double hostMemoryUsage;
-                    double hostDiskUsage;
-                    if (TryReadHostResourceUsage(context.Name, out hostCpuUsage, out hostMemoryUsage, out hostDiskUsage))
-                    {
-                        cpuUsage = hostCpuUsage;
-                        memoryUsage = hostMemoryUsage;
-                        diskUsage = hostDiskUsage;
-                    }
+                    containers = ReadDockerContainers(context.Name);
+                    containerStats = ReadDockerContainerStats(context.Name);
+                    hostCpuLimitText = ReadHostCpuLimitText(context.Name);
+                    var hostMemoryTotalMb = ReadHostMemoryLimitMb(context.Name);
+                    cpuUsage = CalculateContainerCpuUsagePercent(containerStats.Values, hostCpuLimitText);
+                    memoryUsage = CalculateContainerMemoryUsagePercent(containerStats.Values, hostMemoryTotalMb);
+                    runningCount = containers.Count(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase));
+                }
+                else
+                {
+                    double totalContainerCpuPercent;
+                    double totalContainerMemoryUsedBytes;
+                    ReadLightweightContainerSummary(
+                        context.Name,
+                        out runningCount,
+                        out totalContainerCpuPercent,
+                        out totalContainerMemoryUsedBytes);
+
+                    double hostCpuCores;
+                    double hostMemoryTotalBytes;
+                    ReadHostCapacityForContainerSummary(
+                        context.Name,
+                        out hostCpuCores,
+                        out hostMemoryTotalBytes);
+
+                    cpuUsage = hostCpuCores > 0
+                        ? Math.Max(0, Math.Min(100, totalContainerCpuPercent / hostCpuCores))
+                        : Math.Max(0, Math.Min(100, totalContainerCpuPercent));
+                    memoryUsage = hostMemoryTotalBytes > 0
+                        ? Math.Max(0, Math.Min(100, totalContainerMemoryUsedBytes * 100d / hostMemoryTotalBytes))
+                        : 0;
                 }
 
-                var runningCount = includeContainerData
-                    ? containers.Count(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase))
-                    : ReadRunningContainerCount(context.Name);
-                if (includeContainerData && runningCount == 0)
+                var diskUsage = ReadDockerRootDiskUsagePercent(context.Name);
+                if (containerReadMode == ContainerReadMode.FullDetails && runningCount == 0)
                 {
                     runningCount = containers.Count(c => c.Status.IndexOf("Up", StringComparison.OrdinalIgnoreCase) >= 0);
                 }
@@ -2548,7 +2530,7 @@ namespace WpfApp1
                     strategyRows.Add(new DeployImageCard(repoTag, ShortId(img.Id, 12), img.CreatedAt, img.Size));
                 }
 
-                for (var cIndex = 0; cIndex < containers.Count; cIndex++)
+                for (var cIndex = 0; containerReadMode == ContainerReadMode.FullDetails && cIndex < containers.Count; cIndex++)
                 {
                     var c = containers[cIndex];
                     DockerContainerStatsInfo stat;
@@ -2619,7 +2601,7 @@ namespace WpfApp1
                 programRows.Take(30).ToList(),
                 strategyRows.Take(50).ToList(),
                 deviceContexts,
-                includeContainerData);
+                containerReadMode);
 
             return true;
         }
@@ -3319,6 +3301,93 @@ namespace WpfApp1
             }
 
             return false;
+        }
+
+        private void ReadLightweightContainerSummary(
+            string contextName,
+            out int runningContainerCount,
+            out double totalCpuPercent,
+            out double totalMemoryUsedBytes)
+        {
+            runningContainerCount = 0;
+            totalCpuPercent = 0;
+            totalMemoryUsedBytes = 0;
+
+            string output;
+            if (!TryRunDockerCommand(
+                "stats --no-stream --no-trunc --format \"{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}\"",
+                contextName,
+                out output))
+            {
+                return;
+            }
+
+            var lines = (output ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            runningContainerCount = lines.Length;
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var parts = lines[i].Split('|');
+                if (parts.Length < 3)
+                {
+                    continue;
+                }
+
+                totalCpuPercent += ParsePercent(parts[1]);
+                totalMemoryUsedBytes += ExtractMemoryUsedBytes(parts[2]);
+            }
+        }
+
+        private void ReadHostCapacityForContainerSummary(
+            string contextName,
+            out double hostCpuCores,
+            out double hostMemoryTotalBytes)
+        {
+            hostCpuCores = 0;
+            hostMemoryTotalBytes = 0;
+
+            var key = (contextName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            string output;
+            if (!TryRunDockerCommand(
+                "info --format \"{{.NCPU}}|{{.MemTotal}}\"",
+                key,
+                out output,
+                12000))
+            {
+                return;
+            }
+
+            var line = (output ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .LastOrDefault();
+            var parts = (line ?? string.Empty).Split('|');
+            if (parts.Length < 2)
+            {
+                return;
+            }
+
+            double parsedCpuCores;
+            if (double.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out parsedCpuCores) &&
+                parsedCpuCores > 0)
+            {
+                hostCpuCores = parsedCpuCores;
+                _hostCpuLimitTextByContext[key] = parsedCpuCores.ToString("0.##", CultureInfo.InvariantCulture);
+            }
+
+            long parsedMemoryBytes;
+            if (long.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out parsedMemoryBytes) &&
+                parsedMemoryBytes > 0)
+            {
+                hostMemoryTotalBytes = parsedMemoryBytes;
+                var totalMb = parsedMemoryBytes / (1024L * 1024L);
+                _hostMemoryLimitMbByContext[key] = (int)Math.Max(1, Math.Min(int.MaxValue, totalMb));
+            }
         }
 
         private Dictionary<string, DockerContainerStatsInfo> ReadDockerContainerStats(string contextName)
@@ -5304,7 +5373,7 @@ namespace WpfApp1
                     return;
                 }
                 await Dispatcher.Yield(DispatcherPriority.Background);
-                await RefreshContainerRowsForContextAsync(contextName);
+                await RefreshFullContainerRowsForContextAsync(contextName);
             }
             catch (Exception ex)
             {
@@ -6944,7 +7013,7 @@ namespace WpfApp1
                     await CleanupStressTestContainersAsync(contextName, createdNames);
                 }
 
-                await RefreshContainerRowsForContextAsync(contextName);
+                await RefreshFullContainerRowsForContextAsync(contextName);
                 CloseWindowQuietly(ref progressWindow);
 
                 var detail = failed
@@ -7401,7 +7470,7 @@ namespace WpfApp1
                     return false;
                 }
 
-                var refreshTask = RefreshContainerRowsForContextAsync(context);
+                var refreshTask = RefreshFullContainerRowsForContextAsync(context);
                 var refreshCompleted = await Task.WhenAny(
                     refreshTask,
                     Task.Delay(remainingMs));
@@ -7425,7 +7494,7 @@ namespace WpfApp1
             return false;
         }
 
-        private async Task RefreshContainerRowsForContextAsync(string contextName)
+        private async Task RefreshFullContainerRowsForContextAsync(string contextName)
         {
             var context = (contextName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(context))
@@ -7436,7 +7505,7 @@ namespace WpfApp1
             var deviceName = GetDeviceNameByContextName(context);
             if (string.IsNullOrWhiteSpace(deviceName))
             {
-                await RefreshRuntimeDataBindingsAsync(true);
+                await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.FullDetails);
                 return;
             }
 
@@ -8560,6 +8629,12 @@ namespace WpfApp1
             public string MemoryLimitText { get; }
         }
 
+        private enum ContainerReadMode
+        {
+            LightweightSummary,
+            FullDetails
+        }
+
         private sealed class DockerRuntimeSnapshot
         {
             public DockerRuntimeSnapshot(
@@ -8571,7 +8646,7 @@ namespace WpfApp1
                 List<ProgramFileRow> programFiles,
                 List<DeployImageCard> strategyImages,
                 Dictionary<string, string> deviceContexts,
-                bool includeContainerData)
+                ContainerReadMode containerReadMode)
             {
                 Devices = devices;
                 DeviceImageRows = deviceImageRows;
@@ -8581,7 +8656,7 @@ namespace WpfApp1
                 ProgramFiles = programFiles;
                 StrategyImages = strategyImages;
                 DeviceContexts = deviceContexts;
-                IncludeContainerData = includeContainerData;
+                ContainerReadMode = containerReadMode;
             }
 
             public List<DeviceInfo> Devices { get; }
@@ -8592,7 +8667,7 @@ namespace WpfApp1
             public List<ProgramFileRow> ProgramFiles { get; }
             public List<DeployImageCard> StrategyImages { get; }
             public Dictionary<string, string> DeviceContexts { get; }
-            public bool IncludeContainerData { get; }
+            public ContainerReadMode ContainerReadMode { get; }
         }
 
         private sealed class DockerContextInfo

@@ -19,7 +19,7 @@ namespace WpfApp1
 
                 if (!_hasReadDeviceInfo)
                 {
-                    await RefreshRuntimeDataBindingsAsync(false, false);
+                    await RefreshRuntimeDataBindingsAsync(false);
                     return;
                 }
 
@@ -28,7 +28,7 @@ namespace WpfApp1
                     _suppressContainerDeviceSelectionRefresh = true;
                     try
                     {
-                        await RefreshRuntimeDataBindingsAsync(true, false);
+                        await RefreshRuntimeDataBindingsAsync(true);
                     }
                     finally
                     {
@@ -39,7 +39,7 @@ namespace WpfApp1
                 var contextName = GetSelectedContainerContextName();
                 if (!string.IsNullOrWhiteSpace(contextName))
                 {
-                    await RefreshContainerRowsForContextAsync(contextName);
+                    await RefreshFullContainerRowsForContextAsync(contextName);
                 }
             }
             finally

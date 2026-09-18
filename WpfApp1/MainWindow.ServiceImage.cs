@@ -43,7 +43,7 @@ namespace WpfApp1
             ShowServiceImagePanel();
             SetSidebarSelected("ServiceImage");
             ResetServiceImageActionState();
-            _ = RefreshRuntimeDataBindingsAsync(false, false);
+            _ = RefreshRuntimeDataBindingsAsync(false);
         }
 
         private void ShowServiceImagePanel()
