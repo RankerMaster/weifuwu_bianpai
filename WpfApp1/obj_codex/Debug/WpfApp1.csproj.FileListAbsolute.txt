@@ -1,0 +1,6 @@
+E:\vs_projects\微服务容器编排\远程服务器连接_plus\WpfApp1\obj_codex\Debug\WpfApp1.csprojResolveAssemblyReference.cache
+E:\vs_projects\微服务容器编排\远程服务器连接_plus\WpfApp1\obj_codex\Debug\MainWindow.baml
+E:\vs_projects\微服务容器编排\远程服务器连接_plus\WpfApp1\obj_codex\Debug\MainWindow.g.cs
+E:\vs_projects\微服务容器编排\远程服务器连接_plus\WpfApp1\obj_codex\Debug\App.g.cs
+E:\vs_projects\微服务容器编排\远程服务器连接_plus\WpfApp1\obj_codex\Debug\WpfApp1_MarkupCompile.cache
+E:\vs_projects\微服务容器编排\远程服务器连接_plus\WpfApp1\obj_codex\Debug\WpfApp1.g.resources
