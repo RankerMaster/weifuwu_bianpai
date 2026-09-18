@@ -155,7 +155,20 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <UniformGrid x:Name="DashboardTopPanel" Grid.Row="0" Columns="3" Margin="0,0,0,12">
+                <!--
+                    设计器静态预览开关（仅修改 d:Visibility，不影响程序运行）：
+                
+                    镜像和容器感知：DashboardTopPanel、DashboardMainPanel = Visible，其余 = Collapsed
+                    容器策略优化：StrategyPanel = Visible，其余 = Collapsed
+                    微服务镜像编排：ServiceImagePanel = Visible，其余 = Collapsed
+                    微服务容器编排：ServiceContainerPanel = Visible，其余 = Collapsed
+                
+                -->
+                <UniformGrid x:Name="DashboardTopPanel"
+                             Grid.Row="0"
+                             Columns="3"
+                             Margin="0,0,0,12"
+                             d:Visibility="Collapsed">
                     <Border Margin="0,0,8,0" CornerRadius="8" Padding="18" MinHeight="190" Background="#3F72D8">
                         <StackPanel>
                             <TextBlock Text="镜像"
@@ -195,7 +208,8 @@
                         CornerRadius="8"
                         BorderBrush="#DFE5EE"
                         BorderThickness="1"
-                        Padding="16">
+                        Padding="16"
+                        d:Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -388,7 +402,8 @@
                         BorderBrush="#D1D5DB"
                         BorderThickness="1"
                         Padding="16"
-                        Visibility="Collapsed">
+                        Visibility="Collapsed"
+                        d:Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -572,7 +587,8 @@
                         BorderThickness="1"
                         Padding="14"
                         MinHeight="760"
-                        Visibility="Collapsed">
+                        Visibility="Collapsed"
+                        d:Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -770,7 +786,8 @@
                         BorderThickness="1"
                         Padding="14"
                         MinHeight="760"
-                        Visibility="Collapsed">
+                        Visibility="Collapsed"
+                        d:Visibility="Visible">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
