@@ -165,14 +165,14 @@
                                        HorizontalAlignment="Left"
                                        TextWrapping="NoWrap"
                                        TextTrimming="None" />
-                            <TextBlock x:Name="ImageCountText" Text="30个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
+                            <TextBlock x:Name="ImageCountText" Text="0个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
                     <Border Margin="8,0" CornerRadius="8" Padding="18" MinHeight="190" Background="#2563D6">
                         <StackPanel>
                             <TextBlock Text="已启动容器" Foreground="White" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock x:Name="ContainerCountText" Text="5个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
+                            <TextBlock x:Name="ContainerCountText" Text="0个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
@@ -180,7 +180,7 @@
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="已启动的设备：" FontSize="17" FontWeight="SemiBold" Foreground="#1F2937" VerticalAlignment="Center" />
-                                <TextBlock x:Name="RunningDeviceCountText" Text="3个" FontSize="20" FontWeight="Bold" Foreground="#2563EB" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="RunningDeviceCountText" Text="0个" FontSize="20" FontWeight="Bold" Foreground="#2563EB" Margin="6,0,0,0" VerticalAlignment="Center" />
                             </StackPanel>
                             <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" Height="134">
                                 <StackPanel x:Name="DevicePreviewPanel" />

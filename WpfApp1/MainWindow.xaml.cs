@@ -42,7 +42,6 @@ namespace WpfApp1
         private Window _containerLoadingWindow;
         private bool _hasReadDeviceInfo;
         private bool _isContainerActionRunning;
-        private readonly DispatcherTimer _autoRefreshTimer;
         private const string SshContextPrefix = "SSH:";
         private readonly Dictionary<string, SortDescription> _gridSortStates = new Dictionary<string, SortDescription>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _hostCpuLimitTextByContext = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -55,113 +54,60 @@ namespace WpfApp1
         private readonly Dictionary<string, string> _imageChineseNameByImageId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _imageChineseNameByRepoTag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        private readonly List<DeviceInfo> _devices = new List<DeviceInfo>
-        {
-            new DeviceInfo("设备1", "192.168.0.38", 2.53, 65.00, 90.44, 30, 5),
-            new DeviceInfo("设备2", "192.168.0.40", 12.70, 44.12, 58.30, 21, 3),
-            new DeviceInfo("设备3", "192.168.0.46", 33.18, 25.37, 41.06, 17, 2),
-            new DeviceInfo("设备4", "192.168.0.52", 7.40, 72.50, 20.10, 28, 4)
-        };
+        private readonly List<DeviceInfo> _devices = new List<DeviceInfo>();
 
-        private readonly List<DeviceImageRow> _allImageRows = new List<DeviceImageRow>
-        {
-            new DeviceImageRow("192.168.0.38", "yunyoujun/cook", "latest", "2025-01-24 11:41:38", "41.93MB", "maintainer=NGINX", "01e4c695535c1bdf2aaeabfd124b31...", "云友厨房镜像"),
-            new DeviceImageRow("192.168.0.38", "lovasoa/sqlpage", "latest", "2025-03-23 07:08:54", "25.97MB", "org.opencontainers.image.created=2025-03-22", "03cea01526bd8919fe06711c6de3f9...", "SQL 页面镜像"),
-            new DeviceImageRow("192.168.0.38", "minio/minio", "latest", "2024-10-03 05:38:53", "157.60MB", "architecture=x86_64", "162489e21d268e1d54066abf0e5e0...", "对象存储镜像"),
-            new DeviceImageRow("192.168.0.38", "amir20/dozzle", "latest", "2025-06-17 00:25:23", "54.51MB", "org.opencontainers.image.created=2025-06-16", "1e8d952886d1a98a6b512d4ba2a1...", "日志查看镜像"),
-            new DeviceImageRow("192.168.0.40", "mysql", "5.7.6", "2015-03-31 04:15:40", "344.18MB", "", "2a2a35106ec50fcf259525be5302bd...", "MySQL 数据库"),
-            new DeviceImageRow("192.168.0.40", "ghcr.io/coleifer/sqlite-web", "latest", "2025-03-27 21:23:02", "125.43MB", "", "4b498e295525a9c71113d5c35754c...", "SQLite 管理页"),
-            new DeviceImageRow("192.168.0.40", "esperotech/yaade", "latest", "2025-04-02 17:18:05", "560.76MB", "", "5314a390e9f6f65bb3b739813f7784...", "API 调试平台"),
-            new DeviceImageRow("192.168.0.46", "cars10/elasticsearch", "latest", "2024-12-22 18:08:08", "58.89MB", "maintainer=NGINX", "5603de0f9483bd234f6677e722bab...", "搜索引擎镜像"),
-            new DeviceImageRow("192.168.0.46", "netdata/netdata", "latest", "2025-06-02 10:32:11", "681.27MB", "org.opencontainers.image.authors=Netdatabot", "569338efdcba57155762201daa4e...", "监控面板镜像"),
-            new DeviceImageRow("192.168.0.46", "postgres", "12", "2022-01-04 09:20:14", "353.55MB", "", "58bff76313464ab65dcb0b9a2b910...", "PostgreSQL 数据库"),
-            new DeviceImageRow("192.168.0.52", "chaozhu/easynode", "latest", "2024-10-17 23:57:37", "163.46MB", "", "5d731f4c94c3ce77c0f3416c69af1c0...", "节点管理镜像"),
-            new DeviceImageRow("192.168.0.52", "swr.ap-southeast-1.myhuaweicloud", "latest", "2025-04-19 07:07:14", "189.58MB", "", "60513adac99894bd3aa4a1b31e568...", "华为云仓库镜像"),
-            new DeviceImageRow("192.168.0.52", "wenyang0/codecv", "latest", "2023-08-17 15:48:50", "58.57MB", "", "747df3bcf031b14a8ce8de38b852e...", "代码转换镜像")
-        };
-        private readonly List<DeployImageCard> _strategyImages = new List<DeployImageCard>
-        {
-            new DeployImageCard("custom_image_20251217144522:l", "7a348006a69e", "2025-12-17 14:45", "815 MB"),
-            new DeployImageCard("custom_image_20251214103810:l", "9d94db52a229", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("custom_image_20251214104824:l", "77a8edbe31b3", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("custom_image_20251211085233:l", "f84aa5fb4d18", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("custom_image_20251214104635:l", "9435c3e71c25", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("temp1:ubuntu20.04", "5c5d8a2ebde6", "2025-12-10 16:58", "774 MB"),
-            new DeployImageCard("test1:latest", "7d4a5c5db7fa", "2025-12-10 11:27", "1332 MB"),
-            new DeployImageCard("custom_image_20251211105919:l", "2f73b3909192", "2025-12-10 11:27", "1332 MB"),
-            new DeployImageCard("temp2:ubuntu20.04", "edd7288ecb96", "2025-12-10 11:22", "774 MB"),
-            new DeployImageCard("dslim/slim:latest", "27859c6a5666", "2025-12-09 09:18", "612 MB")
-        };
-        private readonly List<ImageComposeRow> _sourceImages = new List<ImageComposeRow>
-        {
-            new ImageComposeRow("temp1:ubuntu20.04", "5c5d8a2ebde6", "2025-12-10 16:58", "774.9", "设备1"),
-            new ImageComposeRow("test1:latest", "7d4a5c5db7fa", "2025-12-10 11:27", "1332.2", "设备2"),
-            new ImageComposeRow("temp2:ubuntu20.04", "edd7288ecb96", "2025-12-10 11:22", "774.5", "设备3"),
-            new ImageComposeRow("dslim/slim:latest", "27859c6a5666", "2024-02-02 23:19", "72.1", "设备4")
-        };
-        private readonly List<ImageComposeRow> _preparedImages = new List<ImageComposeRow>
-        {
-            new ImageComposeRow("custom_image_20251217144522:l", "7a348006a69e", "2025-12-17 14:45", "815.9", "设备1"),
-            new ImageComposeRow("custom_image_20251214104635:l", "9435c3e71c25", "2025-12-11 08:52", "1332.6", "设备2"),
-            new ImageComposeRow("custom_image_20251214103810:l", "9d94db52a229", "2025-12-11 08:52", "1332.6", "设备2"),
-            new ImageComposeRow("custom_image_20251214104824:l", "77a8ed8e31b3", "2025-12-11 08:52", "1332.6", "设备3"),
-            new ImageComposeRow("custom_image_20251211085233:l", "f84aa5fb4d18", "2025-12-11 08:52", "1332.6", "设备4"),
-            new ImageComposeRow("custom_image_20251211105919:l", "2f33b9901992", "2025-12-10 11:27", "1332.2", "设备1")
-        };
-        private readonly List<ProgramFileRow> _programFiles = new List<ProgramFileRow>
-        {
-            new ProgramFileRow("Cass-Lib-20250717.tgz", "102.38 MB", "2025-09-11 17:23"),
-            new ProgramFileRow("VTTD-ABox300-Fuler-v2.4.0.tgz", "9.15 MB", "2025-09-11 17:21")
-        };
-        private readonly List<ContainerComposeRow> _containerRows = new List<ContainerComposeRow>
-        {
-            new ContainerComposeRow("设备1", "13d61d8cb2a045289d5bedbba1", "/angry_bose", "愤怒玻色容器", "myimage:latest", "exited", "8080:80", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (127) 6 days ago", "", "不限"),
-            new ContainerComposeRow("设备1", "916683c34a897d8051cabdb046", "/mysql-test", "MySQL 测试容器", "mysql:8.0", "exited", "3306:3306", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (0) 6 days ago", "", "不限"),
-            new ContainerComposeRow("设备1", "6f93c32cedb39dd3846b98ee73", "/mystifying_karaman", "神秘卡拉曼容器", "custom_image_20251211...", "exited", "-", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (0) 3 months ago", "", "不限"),
-            new ContainerComposeRow("设备2", "1ef87c52f83785f9f7e045b97f", "/ftp_test", "FTP 测试容器", "test", "running", "21:21", "0.2%", "7MB / 1GB", "0.7%", "0B / 0B", "Up 4 hours", "", "1.00"),
-            new ContainerComposeRow("设备2", "67dde210fc302db6e0b4eb75", "/silly_joliot", "Joliot 实验容器", "cass-image:latest", "running", "-", "0.1%", "5MB / 1GB", "0.5%", "0B / 0B", "Up 2 days", "", "1.00"),
-            new ContainerComposeRow("设备3", "13a3cf9d25a5e3b4438d2d826b", "/laughing_albatta...", "信天翁演示容器", "myimge", "exited", "-", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (0) 4 months ago", "", "不限"),
-            new ContainerComposeRow("设备3", "1fd3f22a10ab4f5aa1b0cce901", "/redis-main", "Redis 缓存容器", "redis:7", "running", "6379:6379", "0.4%", "9MB / 1GB", "0.9%", "0B / 0B", "Up 9 days", "", "1.00"),
-            new ContainerComposeRow("设备4", "8a8f9c3bd01941ca9d1e26ac44", "/nginx-proxy", "Nginx 代理容器", "nginx:latest", "running", "80:80", "0.3%", "8MB / 1GB", "0.8%", "0B / 0B", "Up 15 days", "", "1.00"),
-            new ContainerComposeRow("设备4", "91ab73fa0d614fea8dfebd9c6d", "/api-gateway", "网关容器", "gateway:v2", "paused", "-", "0%", "0B / 0B", "0%", "0B / 0B", "Paused 3 hours", "", "不限")
-        };
+        // 汇总从各设备读取到的 Docker 镜像信息，作为设备镜像列表的数据源。
+        private readonly List<DeviceImageRow> _allImageRows = new List<DeviceImageRow>();
 
+        // 保存策略页面使用的镜像卡片数据，包含镜像仓库标签、ID、创建时间和大小。
+        private readonly List<DeployImageCard> _strategyImages = new List<DeployImageCard>();
+
+        // 保存镜像编排流程中的源镜像，即可作为后续制作或组合基础的镜像。
+        private readonly List<ImageComposeRow> _sourceImages = new List<ImageComposeRow>();
+
+        // 保存已经完成制作、可供后续部署使用的预部署镜像。
+        private readonly List<ImageComposeRow> _preparedImages = new List<ImageComposeRow>();
+
+        // 保存镜像制作或容器编排时可选择的程序包文件及其文件信息。
+        private readonly List<ProgramFileRow> _programFiles = new List<ProgramFileRow>();
+
+        // 保存从设备读取到的容器运行记录，供容器列表展示和操作使用。
+        private readonly List<ContainerComposeRow> _containerRows = new List<ContainerComposeRow>();
+
+        /// <summary>
+        /// 创建主窗口并完成本地初始化：加载 XAML 控件、恢复镜像中文名称、
+        /// 重置运行时界面，并注册窗口加载和关闭事件。
+        /// 构造阶段不会连接远程设备，设备数据由用户执行“读取设备信息”后获取。
+        /// </summary>
         public MainWindow()
         {
+            // 创建 XAML 中声明的控件并初始化字段引用。后续初始化代码依赖这些控件，
+            // 因此 InitializeComponent 必须在所有界面访问操作之前执行。
             InitializeComponent();
+
+            // 从持久化文件读取“镜像 ID/仓库标签 -> 中文名称”的映射，
+            // 再为各 DataGrid 注册统一的列排序逻辑。
             LoadImageChineseNameStore();
-            ApplyStoredImageChineseNamesToCurrentRows();
             RegisterGridSortingBehavior();
+
+            // 删除上次运行生成的设备容器 CSV 日志，避免旧日志混入本次会话。
             CleanupContainerLogCsvFiles();
+
+            // 清空设备、镜像、容器和策略等运行时集合，同时重置仪表盘指标、
+            // 设备选择器及各列表的数据源，使界面以“尚未读取设备”的状态启动。
             ClearRuntimeDataForColdStart();
-            _autoRefreshTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(1500)
-            };
-            _autoRefreshTimer.Tick += async (_, __) =>
-            {
-                if (_isRefreshing)
-                {
-                    return;
-                }
 
-                if (StrategyPanel != null && StrategyPanel.Visibility == Visibility.Visible)
-                {
-                    return;
-                }
-
-                await RefreshRuntimeDataBindingsAsync(false);
-            };
-            // 感知页改为手动刷新。
-            _autoRefreshTimer.Stop();
-
+            // 等窗口及其控件全部加载完成后，将当前运行时集合绑定到界面，
+            // 并把侧边栏默认切换到“感知”页面，同时应用对应的选中样式。
             Loaded += (_, __) =>
             {
                 ApplyRuntimeDataBindings(string.Empty, string.Empty, string.Empty);
                 SetSidebarSelected("Awareness");
             };
+
+            // 窗口关闭时删除本次运行生成的设备容器 CSV 日志，避免留下临时数据。
             Closed += (_, __) => CleanupContainerLogCsvFiles();
-            StrategyImageItemsControl.ItemsSource = null;
+
         }
 
         private void RegisterGridSortingBehavior()
@@ -497,19 +443,38 @@ namespace WpfApp1
             ServiceImageDeviceSelector.SelectedIndex = 0;
         }
 
+        /// <summary>
+        /// 刷新设备、镜像和资源数据，并重新绑定相关界面控件。
+        /// 此重载使用轻量模式，不主动读取容器明细，适用于普通或定时刷新。
+        /// </summary>
+        /// <param name="force">
+        /// 为 <see langword="true"/> 时忽略一秒内的快照缓存并重新读取；
+        /// 为 <see langword="false"/> 时允许直接复用最近一次成功读取的数据。
+        /// </param>
         private async Task RefreshRuntimeDataBindingsAsync(bool force)
         {
+            // 普通刷新仅更新设备、镜像等基础数据，现有容器明细由 ApplyDockerSnapshot 保留。
             await RefreshRuntimeDataBindingsAsync(force, false);
         }
 
+        /// <summary>
+        /// 从当前已登记的 SSH 目标读取 Docker 运行时快照，将成功读取的数据写入内存集合，
+        /// 然后重新绑定仪表盘、服务镜像和容器页面，同时尽量保留用户当前选择的设备。
+        /// </summary>
+        /// <param name="force">是否强制绕过一秒快照缓存；该参数不会绕过正在执行的刷新任务。</param>
+        /// <param name="includeContainerData">
+        /// 是否同时读取并替换容器明细；为 <see langword="false"/> 时保留已有容器列表及设备资源指标。
+        /// </param>
         private async Task RefreshRuntimeDataBindingsAsync(bool force, bool includeContainerData)
         {
+            // 数据源重新绑定会重建设备选择器，因此刷新前先记录三个页面当前选中的设备名称。
             var selectedContainerDevice = GetSelectedContainerDeviceName();
             var selectedDashboardDevice = GetSelectedDashboardDeviceName();
             var selectedServiceImageDevice = GetSelectedServiceImageDeviceName();
 
             if (!_hasReadDeviceInfo)
             {
+                // 尚未成功读取过设备时，不执行 Docker/SSH 命令；恢复冷启动数据并刷新空白界面。
                 ClearRuntimeDataForColdStart();
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
                 return;
@@ -517,18 +482,22 @@ namespace WpfApp1
 
             if (!force && _devices.Count > 0 && DateTime.Now - _lastSnapshotAt < TimeSpan.FromSeconds(1))
             {
+                // 最近一秒内已有有效快照时只重新绑定界面，避免短时间内重复访问远程设备。
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
                 return;
             }
 
             if (_isRefreshing)
             {
+                // 同一时刻只允许一个读取任务执行，防止多个快照并发覆盖共享集合。
                 return;
             }
 
             _isRefreshing = true;
             try
             {
+                // Docker/SSH 查询属于阻塞操作，放到线程池执行，避免阻塞 WPF UI 线程。
+                // 读取失败时返回 null，此时保留现有内存数据，仅继续执行界面绑定。
                 var snapshot = await Task.Run(() =>
                 {
                     DockerRuntimeSnapshot localSnapshot;
@@ -537,18 +506,22 @@ namespace WpfApp1
 
                 if (snapshot != null)
                 {
+                    // 只有获得完整快照后才替换内存数据并更新时间戳，失败结果不会污染缓存时间。
                     ApplyDockerSnapshot(snapshot);
                     _lastSnapshotAt = DateTime.Now;
                 }
 
+                // 使用刷新前保存的设备名称恢复各页面选择，并更新所有关联的数据源和统计信息。
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
             }
             catch (Exception ex)
             {
+                // 后台刷新失败不打断界面操作；保留原有数据，并将错误写入调试输出供排查。
                 Debug.WriteLine("Refresh runtime data failed: " + ex.Message);
             }
             finally
             {
+                // 无论读取成功、返回空快照还是发生异常，都必须释放刷新占用标记。
                 _isRefreshing = false;
             }
         }
@@ -738,44 +711,52 @@ namespace WpfApp1
             return tag == null ? string.Empty : tag.Name;
         }
 
+        /// <summary>
+        /// 响应“读取设备信息”按钮：收集 SSH 登录信息、校验连接凭据、读取目标设备的
+        /// Docker 镜像及资源数据，并刷新界面。读取失败或被用户取消时会回滚本次连接状态。
+        /// </summary>
+        /// <param name="sender">触发事件的“读取设备信息”按钮。</param>
+        /// <param name="e">按钮单击事件参数。</param>
         private async void ReadDeviceInfoButton_OnClick(object sender, RoutedEventArgs e)
         {
             string targetUser;
             string targetIp;
             string targetPassword;
+            // 弹出连接参数对话框；用户取消输入时，不创建进度窗口，也不改变当前设备数据。
             if (!ShowReadDeviceInfoDialog(out targetUser, out targetIp, out targetPassword))
             {
                 return;
             }
 
-            Window progressWindow = null;
-            TextBlock progressText = null;
-            TextBlock progressStageText = null;
-            ProgressBar progressBar = null;
-            var operationCanceled = false;
-            var progressClosedByCode = false;
-            var targetIdentity = string.Empty;
+            TextBlock progressStageText = null;     // 显示当前所处的读取阶段。
+            ProgressBar progressBar = null;         // 显示整体读取进度。
+            TextBlock progressText = null;          // 显示当前操作的详细提示。
+            Window progressWindow = null;           // 显示读取过程的进度窗口。
+
+            var operationCanceled = false;          // 标记用户是否主动取消了读取操作。
+            var progressClosedByCode = false;       // 区分代码关闭窗口与用户手动关闭窗口。
+            var targetIdentity = string.Empty;      // 保存由 SSH 用户名和目标 IP 组成的目标标识。
+
+
             try
             {
+                // 进度窗口由代码动态创建，用于展示连接、校验和数据拉取阶段。
                 progressStageText = new TextBlock
                 {
                     FontSize = 14,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = new SolidColorBrush(Color.FromRgb(36, 64, 98)),
-                    Margin = new Thickness(0, 0, 0, 8),
-                    Text = "阶段：准备中..."
+                    Margin = new Thickness(0, 0, 0, 8)
                 };
                 progressBar = new ProgressBar
                 {
                     Minimum = 0,
                     Maximum = 100,
                     Height = 16,
-                    Margin = new Thickness(0, 0, 0, 10),
-                    Value = 0
+                    Margin = new Thickness(0, 0, 0, 10)
                 };
                 progressText = new TextBlock
                 {
-                    Text = "正在准备连接...",
                     FontSize = 14,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = new SolidColorBrush(Color.FromRgb(42, 53, 68))
@@ -797,6 +778,9 @@ namespace WpfApp1
                     Owner = this,
                     Content = panel
                 };
+
+
+                // 统一更新进度条、阶段标题和详细提示，并把百分比限制在有效范围内。
                 Action<double, string, string> setReadProgress = (percent, stage, text) =>
                 {
                     if (progressBar != null)
@@ -811,7 +795,8 @@ namespace WpfApp1
 
                     SetProgressText(progressText, text);
                 };
-                setReadProgress(12, "连接设备", string.Format("正在连接 {0}@{1} ...", targetUser, targetIp));
+                setReadProgress(15, "连接设备", string.Format("正在连接 {0}@{1} ", targetUser, targetIp));
+                // 只有用户主动关闭进度窗口才视为取消；正常完成时由代码关闭窗口。
                 progressWindow.Closing += (_, __) =>
                 {
                     if (!progressClosedByCode)
@@ -820,20 +805,27 @@ namespace WpfApp1
                     }
                 };
                 progressWindow.Show();
+
+                // 将执行权暂时交还给调度器，使进度窗口先完成渲染并响应可能的关闭操作。
                 await Dispatcher.Yield(DispatcherPriority.Background);
                 if (operationCanceled)
                 {
                     return;
                 }
 
+                // 保存本次读取上下文，生成目标唯一标识，并开始记录各读取阶段的耗时。
                 _readLocalIp = GetLocalIpv4();
                 _readTargetUser = targetUser;
                 _readTargetIp = targetIp;
                 targetIdentity = BuildSshTargetIdentity(targetUser, targetIp);
                 BeginReadTimingCollection();
-                setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1} ...", targetUser, targetIp));
+
+                setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1} ", targetUser, targetIp));
+
                 var validateOut = string.Empty;
                 var validateErr = string.Empty;
+                // SSH 调用是阻塞操作，放到后台线程执行以保持界面可响应；远端返回固定标记
+                // 才表示命令确实执行成功，避免仅凭进程退出状态误判密码校验结果。
                 var validateOk = await Task.Run(() => ExecuteSshRemoteCommand(
                     targetUser,
                     targetIp,
@@ -849,23 +841,29 @@ namespace WpfApp1
 
                 if (!validateOk || (validateOut ?? string.Empty).IndexOf("__PWD_CHECK_OK__", StringComparison.OrdinalIgnoreCase) < 0)
                 {
+                    // 校验失败时先按“代码主动关闭”处理进度窗口，再展示 SSH 标准错误或输出。
                     progressClosedByCode = true;
                     CloseWindowQuietly(ref progressWindow);
                     if (!operationCanceled)
                     {
                         ShowScrollableErrorDialog(
                             "读取设备信息",
-                            "密码校验失败，请检查用户名/密码。\n\n输出：\n" +
+                            "密码校验失败，请检查用户名/IP/密码。\n\n输出：\n" +
                             (string.IsNullOrWhiteSpace(validateErr) ? (validateOut ?? string.Empty) : validateErr));
                     }
 
                     return;
                 }
+
+                // 校验成功后再登记目标和密码，供后续远程 Docker 命令复用。
                 var existed = _readTargetIps.Contains(targetIdentity);
                 _readTargetIps.Add(targetIdentity);
                 _sshPasswordByTarget[targetIdentity] = targetPassword ?? string.Empty;
                 _hasReadDeviceInfo = true;
+
                 setReadProgress(56, "拉取镜像与资源", "正在拉取远程镜像与资源指标数据...");
+
+                // 强制读取最新快照，并包含容器明细；结果会同步到设备、镜像和容器集合及界面。
                 await RefreshRuntimeDataBindingsAsync(true, true);
                 if (operationCanceled)
                 {
@@ -875,6 +873,8 @@ namespace WpfApp1
                 var containsTargetDevice = _devices.Any(d => string.Equals(d.Ip, targetIp, StringComparison.OrdinalIgnoreCase));
                 if (!containsTargetDevice)
                 {
+                    // 本次新增的目标未返回 Docker 数据时，撤销刚写入的目标、密码和命令候选缓存；
+                    // 已存在的目标保留原缓存，避免一次刷新失败破坏此前的连接配置。
                     if (!existed)
                     {
                         _readTargetIps.Remove(targetIdentity);
@@ -884,11 +884,13 @@ namespace WpfApp1
 
                     if (_readTargetIps.Count == 0)
                     {
+                        // 已无任何有效目标时恢复冷启动界面，防止继续显示失败读取留下的数据。
                         _hasReadDeviceInfo = false;
                         ClearRuntimeDataForColdStart();
                     }
                     else
                     {
+                        // 仍有其他目标时重新生成快照，使界面只展示剩余有效设备的数据。
                         await RefreshRuntimeDataBindingsAsync(true, true);
                     }
 
@@ -907,13 +909,16 @@ namespace WpfApp1
                     return;
                 }
 
+                // 为已发现设备准备日志文件后，再向用户报告读取成功。
                 EnsureContainerLogCsvFilesForKnownDevices();
+
                 setReadProgress(100, "完成", "设备信息读取完成。");
 
                 progressClosedByCode = true;
                 CloseWindowQuietly(ref progressWindow);
                 if (!operationCanceled)
                 {
+                    // 汇总各阶段耗时，并连同当前有效目标数量一起反馈给用户。
                     var timingSummary = BuildReadTimingSummary();
                     MessageBox.Show(
                         this,
@@ -930,7 +935,9 @@ namespace WpfApp1
             }
             finally
             {
+                // 无论从哪个分支退出，都结束本次计时采集，避免影响下一次读取的统计结果。
                 EndReadTimingCollection();
+                // 用户中途取消时清除当前目标状态，避免保留不完整的运行时数据。
                 if (operationCanceled && !string.IsNullOrWhiteSpace(targetIdentity))
                 {
                     _readTargetIps.Remove(targetIdentity);
@@ -944,6 +951,7 @@ namespace WpfApp1
                     }
                 }
 
+                // 无论成功、失败还是取消，都确保关闭进度窗口并恢复主窗口焦点。
                 if (progressWindow != null)
                 {
                     try

@@ -353,45 +353,6 @@ namespace WpfApp1
             return BuildChineseImageName(repository);
         }
 
-        private void ApplyStoredImageChineseNamesToCurrentRows()
-        {
-            for (var i = 0; i < _allImageRows.Count; i++)
-            {
-                var row = _allImageRows[i];
-                row.ChineseName = ResolveImageChineseName(
-                    row.ContextName,
-                    row.DeviceName,
-                    row.DeviceIp,
-                    row.Repository,
-                    row.Tag,
-                    row.ImageId);
-            }
-
-            for (var i = 0; i < _sourceImages.Count; i++)
-            {
-                var row = _sourceImages[i];
-                row.ChineseName = ResolveImageChineseName(
-                    row.ContextName,
-                    row.DeviceName,
-                    string.Empty,
-                    row.Name,
-                    row.Tag,
-                    row.ImageId);
-            }
-
-            for (var i = 0; i < _preparedImages.Count; i++)
-            {
-                var row = _preparedImages[i];
-                row.ChineseName = ResolveImageChineseName(
-                    row.ContextName,
-                    row.DeviceName,
-                    string.Empty,
-                    row.Name,
-                    row.Tag,
-                    row.ImageId);
-            }
-        }
-
         private void ApplyImageChineseNameToMatchingRows(
             string contextName,
             string deviceName,
