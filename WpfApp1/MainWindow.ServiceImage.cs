@@ -43,6 +43,13 @@ namespace WpfApp1
             ShowServiceImagePanel();
             SetSidebarSelected("ServiceImage");
             ResetServiceImageActionState();
+            RefreshLocalServiceImageLists();
+            BindServiceImageRows(GetSelectedServiceImageDeviceName());
+            BindProgramFileGridWithSelection(
+                ProgramFileGrid,
+                _programFiles
+                    .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList());
             _ = RefreshRuntimeDataBindingsAsync(false);
         }
 
@@ -54,14 +61,6 @@ namespace WpfApp1
             ServiceContainerPanel.Visibility = Visibility.Collapsed;
             ServiceImagePanel.Visibility = Visibility.Visible;
 
-            // 不依赖“读取设备信息”，进入页面即优先展示本地基础镜像与程序包目录内容。
-            RefreshLocalServiceImageLists();
-            BindServiceImageRows(GetSelectedServiceImageDeviceName());
-            BindProgramFileGridWithSelection(
-                ProgramFileGrid,
-                _programFiles
-                    .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-                    .ToList());
         }
 
         private void ServiceImageDeviceSelector_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1790,7 +1789,7 @@ namespace WpfApp1
                 progressBar.Value = 94;
                 progressStageText.Text = "阶段：刷新界面";
                 SetProgressText(progressText, "正在刷新界面数据...");
-                await RefreshRuntimeDataBindingsAsync(true);
+                RefreshLocalServiceImageLists();
                 ShowServiceImagePanel();
                 SetSidebarSelected("ServiceImage");
                 BindServiceImageRows(GetSelectedServiceImageDeviceName());
@@ -2629,7 +2628,7 @@ namespace WpfApp1
                 await Task.Run(() => TryRunDockerCommand(rmCmd, null, out rmOut, 15000));
 
                 SetProgressText(progressText, "正在刷新镜像列表...");
-                await RefreshRuntimeDataBindingsAsync(true);
+                RefreshLocalServiceImageLists();
                 ShowServiceImagePanel();
                 BindServiceImageRows(GetSelectedServiceImageDeviceName());
             }
@@ -2693,7 +2692,8 @@ namespace WpfApp1
                 }
             }
 
-            await RefreshRuntimeDataBindingsAsync(true);
+            RefreshLocalServiceImageLists();
+            BindServiceImageRows(GetSelectedServiceImageDeviceName());
 
             if (failedTags.Count == 0)
             {

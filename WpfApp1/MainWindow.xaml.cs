@@ -43,6 +43,7 @@ namespace WpfApp1
         private bool _hasReadDeviceInfo;
         private bool _isContainerActionRunning;
         private const string SshContextPrefix = "SSH:";
+        private const string DashboardAllDevicesSelectionKey = "__DASHBOARD_ALL_DEVICES__";
         private readonly Dictionary<string, SortDescription> _gridSortStates = new Dictionary<string, SortDescription>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _hostCpuLimitTextByContext = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _hostMemoryLimitMbByContext = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -51,6 +52,7 @@ namespace WpfApp1
         private bool _isCollectingReadTimings;
         private readonly object _readTimingLock = new object();
         private readonly List<ReadTimingRecord> _readTimingRecords = new List<ReadTimingRecord>();
+        private Stopwatch _readWallClock;
         private readonly Dictionary<string, string> _imageChineseNameByImageId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _imageChineseNameByRepoTag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -457,6 +459,15 @@ namespace WpfApp1
             await RefreshRuntimeDataBindingsAsync(force, ContainerReadMode.LightweightSummary);
         }
 
+        private async Task RefreshRuntimeDataBindingsAsync(bool force, ContainerReadMode containerReadMode)
+        {
+            await RefreshRuntimeDataBindingsAsync(
+                force,
+                containerReadMode,
+                _readTargetIps.ToList(),
+                SnapshotApplyMode.ReplaceAll);
+        }
+
         /// <summary>
         /// 从当前已登记的 SSH 目标读取 Docker 运行时快照，将成功读取的数据写入内存集合，
         /// 然后重新绑定仪表盘、服务镜像和容器页面，同时尽量保留用户当前选择的设备。
@@ -465,11 +476,17 @@ namespace WpfApp1
         /// <param name="containerReadMode">
         /// 容器数据读取模式：轻量模式只读取运行中容器汇总，完整模式读取并替换容器明细。
         /// </param>
-        private async Task RefreshRuntimeDataBindingsAsync(bool force, ContainerReadMode containerReadMode)
+        private async Task<bool> RefreshRuntimeDataBindingsAsync(
+            bool force,
+            ContainerReadMode containerReadMode,
+            IEnumerable<string> targetIdentities,
+            SnapshotApplyMode applyMode)
         {
             // 数据源重新绑定会重建设备选择器，因此刷新前先记录三个页面当前选中的设备名称。
             var selectedContainerDevice = GetSelectedContainerDeviceName();
-            var selectedDashboardDevice = GetSelectedDashboardDeviceName();
+            var selectedDashboardDevice = IsAllDashboardDevicesSelected()
+                ? DashboardAllDevicesSelectionKey
+                : GetSelectedDashboardDeviceName();
             var selectedServiceImageDevice = GetSelectedServiceImageDeviceName();
 
             if (!_hasReadDeviceInfo)
@@ -477,20 +494,33 @@ namespace WpfApp1
                 // 尚未成功读取过设备时，不执行 Docker/SSH 命令；恢复冷启动数据并刷新空白界面。
                 ClearRuntimeDataForColdStart();
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
-                return;
+                return false;
             }
 
-            if (!force && _devices.Count > 0 && DateTime.Now - _lastSnapshotAt < TimeSpan.FromSeconds(1))
+            if (applyMode == SnapshotApplyMode.ReplaceAll &&
+                !force &&
+                _devices.Count > 0 &&
+                DateTime.Now - _lastSnapshotAt < TimeSpan.FromSeconds(1))
             {
                 // 最近一秒内已有有效快照时只重新绑定界面，避免短时间内重复访问远程设备。
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
-                return;
+                return true;
             }
 
             if (_isRefreshing)
             {
                 // 同一时刻只允许一个读取任务执行，防止多个快照并发覆盖共享集合。
-                return;
+                return false;
+            }
+
+            var targets = (targetIdentities ?? Enumerable.Empty<string>())
+                .Select(target => (target ?? string.Empty).Trim())
+                .Where(target => !string.IsNullOrWhiteSpace(target))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (targets.Count == 0)
+            {
+                return false;
             }
 
             _isRefreshing = true;
@@ -501,23 +531,25 @@ namespace WpfApp1
                 var snapshot = await Task.Run(() =>
                 {
                     DockerRuntimeSnapshot localSnapshot;
-                    return TryReadDockerSnapshot(out localSnapshot, _readLocalIp, _readTargetIps, containerReadMode) ? localSnapshot : null;
+                    return TryReadDockerSnapshot(out localSnapshot, _readLocalIp, targets, containerReadMode) ? localSnapshot : null;
                 });
 
                 if (snapshot != null)
                 {
                     // 只有获得完整快照后才替换内存数据并更新时间戳，失败结果不会污染缓存时间。
-                    ApplyDockerSnapshot(snapshot);
+                    ApplyDockerSnapshot(snapshot, applyMode);
                     _lastSnapshotAt = DateTime.Now;
                 }
 
                 // 使用刷新前保存的设备名称恢复各页面选择，并更新所有关联的数据源和统计信息。
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
+                return snapshot != null;
             }
             catch (Exception ex)
             {
                 // 后台刷新失败不打断界面操作；保留原有数据，并将错误写入调试输出供排查。
                 Debug.WriteLine("Refresh runtime data failed: " + ex.Message);
+                return false;
             }
             finally
             {
@@ -578,7 +610,6 @@ namespace WpfApp1
                 ServiceImageDeviceSelector.SelectedIndex = 0;
             }
 
-            RefreshLocalServiceImageLists();
             BindServiceImageRows(GetSelectedServiceImageDeviceName());
 
             BindProgramFileGridWithSelection(
@@ -676,6 +707,12 @@ namespace WpfApp1
             }
 
             RunningDeviceCountText.Text = string.Format("{0}个", runningDevices.Count);
+            if (string.Equals(preferredDeviceName, DashboardAllDevicesSelectionKey, StringComparison.Ordinal))
+            {
+                DeviceSelector.SelectedIndex = 0;
+                return;
+            }
+
             if (!string.IsNullOrWhiteSpace(preferredDeviceName))
             {
                 for (var i = 0; i < DeviceSelector.Items.Count; i++)
@@ -711,6 +748,12 @@ namespace WpfApp1
             return tag == null ? string.Empty : tag.Name;
         }
 
+        private bool IsAllDashboardDevicesSelected()
+        {
+            var selected = DeviceSelector.SelectedItem as ComboBoxItem;
+            return selected != null && string.Equals(selected.Tag as string, "ALL", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// 响应“读取设备信息”按钮：收集 SSH 登录信息、校验连接凭据、读取目标设备的
         /// Docker 镜像及资源数据，并刷新界面。读取失败或被用户取消时会回滚本次连接状态。
@@ -719,12 +762,14 @@ namespace WpfApp1
         /// <param name="e">按钮单击事件参数。</param>
         private async void ReadDeviceInfoButton_OnClick(object sender, RoutedEventArgs e)
         {
+            BeginReadTimingCollection();
             string targetUser;
             string targetIp;
             string targetPassword;
             // 弹出连接参数对话框；用户取消输入时，不创建进度窗口，也不改变当前设备数据。
             if (!ShowReadDeviceInfoDialog(out targetUser, out targetIp, out targetPassword))
             {
+                EndReadTimingCollection();
                 return;
             }
 
@@ -736,6 +781,11 @@ namespace WpfApp1
             var operationCanceled = false;          // 标记用户是否主动取消了读取操作。
             var progressClosedByCode = false;       // 区分代码关闭窗口与用户手动关闭窗口。
             var targetIdentity = string.Empty;      // 保存由 SSH 用户名和目标 IP 组成的目标标识。
+            var targetRegisteredThisAttempt = false;
+            var replacedTargetIdentity = string.Empty;
+            var exactTargetIdentityExisted = false;
+            var hadPreviousTargetPassword = false;
+            var previousTargetPassword = string.Empty;
 
 
             try
@@ -813,12 +863,11 @@ namespace WpfApp1
                     return;
                 }
 
-                // 保存本次读取上下文，生成目标唯一标识，并开始记录各读取阶段的耗时。
+                // 保存本次读取上下文并生成目标唯一标识。
                 _readLocalIp = GetLocalIpv4();
                 _readTargetUser = targetUser;
                 _readTargetIp = targetIp;
                 targetIdentity = BuildSshTargetIdentity(targetUser, targetIp);
-                BeginReadTimingCollection();
 
                 setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1} ", targetUser, targetIp));
 
@@ -830,10 +879,11 @@ namespace WpfApp1
                     targetUser,
                     targetIp,
                     targetPassword,
-                    "echo __PWD_CHECK_OK__",
-                    15000,
-                    out validateOut,
-                    out validateErr));
+                     "echo __PWD_CHECK_OK__",
+                     15000,
+                     out validateOut,
+                     out validateErr,
+                     "ssh-password-check"));
                 if (operationCanceled)
                 {
                     return;
@@ -849,37 +899,55 @@ namespace WpfApp1
                         ShowScrollableErrorDialog(
                             "读取设备信息",
                             "密码校验失败，请检查用户名/IP/密码。\n\n输出：\n" +
-                            (string.IsNullOrWhiteSpace(validateErr) ? (validateOut ?? string.Empty) : validateErr));
+                            (string.IsNullOrWhiteSpace(validateErr) ? (validateOut ?? string.Empty) : validateErr) +
+                            "\n\n耗时摘要：\n" + BuildReadTimingSummary());
                     }
 
                     return;
                 }
 
                 // 校验成功后再登记目标和密码，供后续远程 Docker 命令复用。
-                var existed = _readTargetIps.Contains(targetIdentity);
+                exactTargetIdentityExisted = _readTargetIps.Contains(targetIdentity);
+                hadPreviousTargetPassword = _sshPasswordByTarget.TryGetValue(targetIdentity, out previousTargetPassword);
+                replacedTargetIdentity = _readTargetIps.FirstOrDefault(identity =>
+                {
+                    var value = (identity ?? string.Empty).Trim();
+                    var at = value.LastIndexOf('@');
+                    var host = at >= 0 && at < value.Length - 1 ? value.Substring(at + 1).Trim() : string.Empty;
+                    return string.Equals(value, targetIdentity, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(host, targetIp, StringComparison.OrdinalIgnoreCase);
+                }) ?? string.Empty;
                 _readTargetIps.Add(targetIdentity);
                 _sshPasswordByTarget[targetIdentity] = targetPassword ?? string.Empty;
+                targetRegisteredThisAttempt = !exactTargetIdentityExisted;
                 _hasReadDeviceInfo = true;
 
                 setReadProgress(56, "拉取镜像与资源", "正在拉取远程镜像与资源指标数据...");
 
                 // 首次读取使用轻量容器汇总：保留镜像和 Docker 磁盘信息，不预取容器明细。
-                await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
+                var readSucceeded = await RefreshRuntimeDataBindingsAsync(
+                    true,
+                    ContainerReadMode.LightweightSummary,
+                    new[] { targetIdentity },
+                    SnapshotApplyMode.MergeDevices);
                 if (operationCanceled)
                 {
                     return;
                 }
 
-                var containsTargetDevice = _devices.Any(d => string.Equals(d.Ip, targetIp, StringComparison.OrdinalIgnoreCase));
-                if (!containsTargetDevice)
+                if (!readSucceeded)
                 {
                     // 本次新增的目标未返回 Docker 数据时，撤销刚写入的目标、密码和命令候选缓存；
                     // 已存在的目标保留原缓存，避免一次刷新失败破坏此前的连接配置。
-                    if (!existed)
+                    if (!exactTargetIdentityExisted)
                     {
                         _readTargetIps.Remove(targetIdentity);
                         _sshPasswordByTarget.Remove(targetIdentity);
                         _preferredSshDockerCandidateIndex.Remove(targetIdentity);
+                    }
+                    else if (hadPreviousTargetPassword)
+                    {
+                        _sshPasswordByTarget[targetIdentity] = previousTargetPassword;
                     }
 
                     if (_readTargetIps.Count == 0)
@@ -888,25 +956,28 @@ namespace WpfApp1
                         _hasReadDeviceInfo = false;
                         ClearRuntimeDataForColdStart();
                     }
-                    else
-                    {
-                        // 仍有其他目标时重新生成快照，使界面只展示剩余有效设备的数据。
-                        await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
-                    }
-
                     progressClosedByCode = true;
                     CloseWindowQuietly(ref progressWindow);
                     if (!operationCanceled)
                     {
-                        MessageBox.Show(
-                            this,
-                            string.Format("连接失败：未读取到目标设备 {0} 的 Docker 运行信息。", targetIp),
+                        ShowScrollableErrorDialog(
                             "读取设备信息",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
+                            string.Format(
+                                "连接失败：未读取到目标设备 {0} 的 Docker 运行信息。\n\n耗时摘要：\n{1}",
+                                targetIp,
+                                BuildReadTimingSummary()));
                     }
 
                     return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(replacedTargetIdentity) &&
+                    !string.Equals(replacedTargetIdentity, targetIdentity, StringComparison.OrdinalIgnoreCase))
+                {
+                    _readTargetIps.Remove(replacedTargetIdentity);
+                    _sshPasswordByTarget.Remove(replacedTargetIdentity);
+                    _preferredSshDockerCandidateIndex.Remove(replacedTargetIdentity);
+                    _lastSshErrorByTarget.Remove(replacedTargetIdentity);
                 }
 
                 // 为已发现设备准备日志文件后，再向用户报告读取成功。
@@ -938,7 +1009,7 @@ namespace WpfApp1
                 // 无论从哪个分支退出，都结束本次计时采集，避免影响下一次读取的统计结果。
                 EndReadTimingCollection();
                 // 用户中途取消时清除当前目标状态，避免保留不完整的运行时数据。
-                if (operationCanceled && !string.IsNullOrWhiteSpace(targetIdentity))
+                if (operationCanceled && targetRegisteredThisAttempt && !string.IsNullOrWhiteSpace(targetIdentity))
                 {
                     _readTargetIps.Remove(targetIdentity);
                     _sshPasswordByTarget.Remove(targetIdentity);
@@ -949,6 +1020,10 @@ namespace WpfApp1
                         _hasReadDeviceInfo = false;
                         ClearRuntimeDataForColdStart();
                     }
+                }
+                else if (operationCanceled && exactTargetIdentityExisted && hadPreviousTargetPassword)
+                {
+                    _sshPasswordByTarget[targetIdentity] = previousTargetPassword;
                 }
 
                 // 无论成功、失败还是取消，都确保关闭进度窗口并恢复主窗口焦点。
@@ -1869,7 +1944,40 @@ namespace WpfApp1
                     await WaitForRuntimeRefreshIdleAsync(10000);
                 }
 
-                await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
+                var selectedItem = DeviceSelector.SelectedItem as ComboBoxItem;
+                var selectedDevice = selectedItem == null ? null : selectedItem.Tag as DeviceInfo;
+                if (selectedDevice == null)
+                {
+                    // “全部设备”只在用户明确选择全部时读取所有已登记目标。
+                    await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
+                }
+                else
+                {
+                    var contextName = selectedDevice.ContextName;
+                    if (string.IsNullOrWhiteSpace(contextName))
+                    {
+                        _deviceContextMap.TryGetValue(selectedDevice.Name, out contextName);
+                    }
+
+                    string identity;
+                    if (!TryResolveSshIdentityForContext(contextName, out identity) ||
+                        string.IsNullOrWhiteSpace(identity))
+                    {
+                        MessageBox.Show(
+                            this,
+                            "无法确定当前设备对应的 SSH 目标，本次未刷新其他设备。",
+                            "刷新设备信息",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    await RefreshRuntimeDataBindingsAsync(
+                        true,
+                        ContainerReadMode.LightweightSummary,
+                        new[] { identity },
+                        SnapshotApplyMode.MergeDevices);
+                }
             }
             finally
             {
@@ -2214,23 +2322,20 @@ namespace WpfApp1
             return geometry;
         }
 
-        private void ApplyDockerSnapshot(DockerRuntimeSnapshot snapshot)
+        private void ApplyDockerSnapshot(DockerRuntimeSnapshot snapshot, SnapshotApplyMode applyMode)
         {
+            if (applyMode == SnapshotApplyMode.MergeDevices)
+            {
+                MergeDockerSnapshot(snapshot);
+                return;
+            }
+
             var devices = snapshot.Devices;
             _devices.Clear();
             _devices.AddRange(devices);
 
             _allImageRows.Clear();
             _allImageRows.AddRange(snapshot.DeviceImageRows);
-
-            _sourceImages.Clear();
-            _sourceImages.AddRange(snapshot.SourceImages);
-
-            _preparedImages.Clear();
-            _preparedImages.AddRange(snapshot.PreparedImages);
-
-            _programFiles.Clear();
-            _programFiles.AddRange(snapshot.ProgramFiles);
 
             if (snapshot.ContainerReadMode == ContainerReadMode.FullDetails)
             {
@@ -2248,9 +2353,98 @@ namespace WpfApp1
             }
         }
 
+        private void MergeDockerSnapshot(DockerRuntimeSnapshot snapshot)
+        {
+            for (var i = 0; i < snapshot.Devices.Count; i++)
+            {
+                var incoming = snapshot.Devices[i];
+                var existingIndex = _devices.FindIndex(device => IsSameDevice(device, incoming));
+                var existing = existingIndex >= 0 ? _devices[existingIndex] : null;
+                var deviceName = existing == null ? incoming.Name : existing.Name;
+                var mergedDevice = new DeviceInfo(
+                    deviceName,
+                    incoming.Ip,
+                    incoming.CpuUsage,
+                    incoming.MemoryUsage,
+                    incoming.DiskUsage,
+                    incoming.ImageCount,
+                    incoming.ContainerCount,
+                    incoming.ContextName);
+
+                if (existingIndex >= 0)
+                {
+                    _devices[existingIndex] = mergedDevice;
+                }
+                else
+                {
+                    _devices.Add(mergedDevice);
+                }
+
+                _allImageRows.RemoveAll(row =>
+                    string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) ||
+                    (!string.IsNullOrWhiteSpace(incoming.ContextName) &&
+                     string.Equals(row.ContextName, incoming.ContextName, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(incoming.Ip) &&
+                     string.Equals(row.DeviceIp, incoming.Ip, StringComparison.OrdinalIgnoreCase)));
+
+                var incomingRows = snapshot.DeviceImageRows
+                    .Where(row =>
+                        string.Equals(row.DeviceName, incoming.Name, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrWhiteSpace(incoming.ContextName) &&
+                         string.Equals(row.ContextName, incoming.ContextName, StringComparison.OrdinalIgnoreCase)))
+                    .Select(row => new DeviceImageRow(
+                        row.DeviceIp,
+                        row.Repository,
+                        row.Tag,
+                        row.Created,
+                        row.Size,
+                        row.Labels,
+                        row.ImageId,
+                        row.ChineseName,
+                        deviceName,
+                        row.ContextName))
+                    .ToList();
+                _allImageRows.AddRange(incomingRows);
+
+                var staleContextKeys = _deviceContextMap
+                    .Where(pair =>
+                        string.Equals(pair.Key, deviceName, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrWhiteSpace(incoming.ContextName) &&
+                         string.Equals(pair.Value, incoming.ContextName, StringComparison.OrdinalIgnoreCase)))
+                    .Select(pair => pair.Key)
+                    .ToList();
+                for (var keyIndex = 0; keyIndex < staleContextKeys.Count; keyIndex++)
+                {
+                    _deviceContextMap.Remove(staleContextKeys[keyIndex]);
+                }
+                _deviceContextMap[deviceName] = incoming.ContextName;
+
+                if (snapshot.ContainerReadMode == ContainerReadMode.FullDetails)
+                {
+                    _containerRows.RemoveAll(row => string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase));
+                    _containerRows.AddRange(snapshot.ContainerRows.Where(row =>
+                        string.Equals(row.DeviceName, incoming.Name, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+        }
+
+        private static bool IsSameDevice(DeviceInfo left, DeviceInfo right)
+        {
+            if (left == null || right == null)
+            {
+                return false;
+            }
+
+            return (!string.IsNullOrWhiteSpace(left.ContextName) &&
+                    string.Equals(left.ContextName, right.ContextName, StringComparison.OrdinalIgnoreCase)) ||
+                   (!string.IsNullOrWhiteSpace(left.Ip) &&
+                    string.Equals(left.Ip, right.Ip, StringComparison.OrdinalIgnoreCase));
+        }
+
         private void RefreshLocalServiceImageLists()
         {
-            var mergedPrepared = ReadLocalPreparedImagesFromDocker();
+            var localImages = ReadDockerImages(null);
+            var mergedPrepared = ReadLocalPreparedImagesFromDocker(localImages);
 
             var preparedRepoTags = new HashSet<string>(
                 mergedPrepared
@@ -2258,7 +2452,7 @@ namespace WpfApp1
                     .Where(tag => !string.IsNullOrWhiteSpace(tag)),
                 StringComparer.OrdinalIgnoreCase);
 
-            var localBaseImages = ReadLocalBaseImages(preparedRepoTags);
+            var localBaseImages = ReadLocalBaseImages(localImages, preparedRepoTags);
             _sourceImages.Clear();
             _sourceImages.AddRange(localBaseImages);
 
@@ -2272,10 +2466,10 @@ namespace WpfApp1
             _programFiles.AddRange(ReadLocalProgramPackages());
         }
 
-        private List<ImageComposeRow> ReadLocalBaseImages(HashSet<string> excludedRepoTags)
+        private List<ImageComposeRow> ReadLocalBaseImages(List<DockerImageInfo> localImages, HashSet<string> excludedRepoTags)
         {
             var rows = new List<ImageComposeRow>();
-            var localImages = ReadDockerImages(null);
+            localImages = localImages ?? new List<DockerImageInfo>();
             for (var i = 0; i < localImages.Count; i++)
             {
                 var img = localImages[i];
@@ -2308,10 +2502,10 @@ namespace WpfApp1
                 .ToList();
         }
 
-        private List<ImageComposeRow> ReadLocalPreparedImagesFromDocker()
+        private List<ImageComposeRow> ReadLocalPreparedImagesFromDocker(List<DockerImageInfo> localImages)
         {
             var rows = new List<ImageComposeRow>();
-            var localImages = ReadDockerImages(null);
+            localImages = localImages ?? new List<DockerImageInfo>();
             for (var i = 0; i < localImages.Count; i++)
             {
                 var img = localImages[i];
@@ -2377,6 +2571,35 @@ namespace WpfApp1
             return fallbackCreatedAt ?? string.Empty;
         }
 
+        private string ResolveSnapshotDeviceName(string contextName, string ip, HashSet<string> usedDeviceNames)
+        {
+            var existing = _devices.FirstOrDefault(device =>
+                (!string.IsNullOrWhiteSpace(contextName) &&
+                 string.Equals(device.ContextName, contextName, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(ip) &&
+                 string.Equals(device.Ip, ip, StringComparison.OrdinalIgnoreCase)));
+            if (existing != null &&
+                (usedDeviceNames == null || !usedDeviceNames.Contains(existing.Name)))
+            {
+                return existing.Name;
+            }
+
+            var unavailableNames = new HashSet<string>(
+                _devices.Where(device => device != null).Select(device => device.Name),
+                StringComparer.OrdinalIgnoreCase);
+            if (usedDeviceNames != null)
+            {
+                unavailableNames.UnionWith(usedDeviceNames);
+            }
+
+            var deviceIndex = 1;
+            while (unavailableNames.Contains(string.Format("设备{0}", deviceIndex)))
+            {
+                deviceIndex++;
+            }
+            return string.Format("设备{0}", deviceIndex);
+        }
+
         private bool TryReadDockerSnapshot(out DockerRuntimeSnapshot snapshot, string localIp, IEnumerable<string> targetIps, ContainerReadMode containerReadMode)
         {
             snapshot = null;
@@ -2432,35 +2655,34 @@ namespace WpfApp1
             var devices = new List<DeviceInfo>();
             var imageRows = new List<DeviceImageRow>();
             var containerRows = new List<ContainerComposeRow>();
-            var imageComposeRows = new List<ImageComposeRow>();
-            var programRows = new List<ProgramFileRow>();
-            var strategyRows = new List<DeployImageCard>();
             var deviceContexts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var seenIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var usedDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            var deviceIndex = 1;
             for (var i = 0; i < contexts.Count; i++)
             {
                 var context = contexts[i];
-                var deviceName = string.Format("设备{0}", deviceIndex);
                 var ip = ResolveContextIp(context.DockerHost);
                 if (!string.IsNullOrWhiteSpace(ip) && seenIps.Contains(ip))
                 {
                     continue;
                 }
                 seenIps.Add(ip);
-                deviceIndex++;
+                var deviceName = ResolveSnapshotDeviceName(context.Name, ip, usedDeviceNames);
+                usedDeviceNames.Add(deviceName);
 
-                var images = ReadDockerImages(context.Name);
+                var images = new List<DockerImageInfo>();
                 var containers = new List<DockerContainerInfo>();
                 var containerStats = new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
                 var hostCpuLimitText = "-";
                 var cpuUsage = 0d;
                 var memoryUsage = 0d;
+                var diskUsage = 0d;
                 var runningCount = 0;
 
                 if (containerReadMode == ContainerReadMode.FullDetails)
                 {
+                    images = ReadDockerImages(context.Name);
                     containers = ReadDockerContainers(context.Name);
                     containerStats = ReadDockerContainerStats(context.Name);
                     hostCpuLimitText = ReadHostCpuLimitText(context.Name);
@@ -2468,33 +2690,23 @@ namespace WpfApp1
                     cpuUsage = CalculateContainerCpuUsagePercent(containerStats.Values, hostCpuLimitText);
                     memoryUsage = CalculateContainerMemoryUsagePercent(containerStats.Values, hostMemoryTotalMb);
                     runningCount = containers.Count(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase));
+                    diskUsage = ReadDockerRootDiskUsagePercent(context.Name);
                 }
                 else
                 {
-                    double totalContainerCpuPercent;
-                    double totalContainerMemoryUsedBytes;
-                    ReadLightweightContainerSummary(
-                        context.Name,
-                        out runningCount,
-                        out totalContainerCpuPercent,
-                        out totalContainerMemoryUsedBytes);
+                    LightweightDockerData lightweightData;
+                    if (!TryReadLightweightDockerData(context.Name, out lightweightData))
+                    {
+                        return false;
+                    }
 
-                    double hostCpuCores;
-                    double hostMemoryTotalBytes;
-                    ReadHostCapacityForContainerSummary(
-                        context.Name,
-                        out hostCpuCores,
-                        out hostMemoryTotalBytes);
-
-                    cpuUsage = hostCpuCores > 0
-                        ? Math.Max(0, Math.Min(100, totalContainerCpuPercent / hostCpuCores))
-                        : Math.Max(0, Math.Min(100, totalContainerCpuPercent));
-                    memoryUsage = hostMemoryTotalBytes > 0
-                        ? Math.Max(0, Math.Min(100, totalContainerMemoryUsedBytes * 100d / hostMemoryTotalBytes))
-                        : 0;
+                    images = lightweightData.Images;
+                    runningCount = lightweightData.RunningContainerCount;
+                    cpuUsage = lightweightData.CpuUsagePercent;
+                    memoryUsage = lightweightData.MemoryUsagePercent;
+                    diskUsage = lightweightData.DiskUsagePercent;
                 }
 
-                var diskUsage = ReadDockerRootDiskUsagePercent(context.Name);
                 if (containerReadMode == ContainerReadMode.FullDetails && runningCount == 0)
                 {
                     runningCount = containers.Count(c => c.Status.IndexOf("Up", StringComparison.OrdinalIgnoreCase) >= 0);
@@ -2525,9 +2737,6 @@ namespace WpfApp1
                         deviceName,
                         context.Name));
 
-                    var repoTag = string.Format("{0}:{1}", img.Repository, img.Tag);
-                    imageComposeRows.Add(new ImageComposeRow(repoTag, NormalizeImageId(img.Id), img.CreatedAt, img.Size, deviceName, context.Name, imageChineseName));
-                    strategyRows.Add(new DeployImageCard(repoTag, ShortId(img.Id, 12), img.CreatedAt, img.Size));
                 }
 
                 for (var cIndex = 0; containerReadMode == ContainerReadMode.FullDetails && cIndex < containers.Count; cIndex++)
@@ -2566,40 +2775,10 @@ namespace WpfApp1
                 return false;
             }
 
-            var localProgramPackages = ReadLocalProgramPackages();
-            if (localProgramPackages.Count > 0)
-            {
-                programRows.AddRange(localProgramPackages);
-            }
-            else
-            {
-                for (var i = 0; i < imageComposeRows.Count && i < 30; i++)
-                {
-                    var row = imageComposeRows[i];
-                    programRows.Add(new ProgramFileRow(row.RepoTag, row.SizeMb, row.Created));
-                }
-            }
-
-            var prepared = imageComposeRows
-                .Where(r => r.RepoTag.IndexOf("custom", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            r.RepoTag.IndexOf("temp", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            r.RepoTag.IndexOf("build", StringComparison.OrdinalIgnoreCase) >= 0)
-                .Take(20)
-                .ToList();
-
-            if (prepared.Count == 0)
-            {
-                prepared = imageComposeRows.Take(20).ToList();
-            }
-
             snapshot = new DockerRuntimeSnapshot(
                 devices,
                 imageRows,
                 containerRows,
-                imageComposeRows.Take(40).ToList(),
-                prepared,
-                programRows.Take(30).ToList(),
-                strategyRows.Take(50).ToList(),
                 deviceContexts,
                 containerReadMode);
 
@@ -3143,8 +3322,13 @@ namespace WpfApp1
                 return new List<DockerImageInfo>();
             }
 
+            return ParseDockerImages(output);
+        }
+
+        private static List<DockerImageInfo> ParseDockerImages(string output)
+        {
             var result = new List<DockerImageInfo>();
-            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
                 var parts = lines[i].Split('|');
@@ -3303,91 +3487,229 @@ namespace WpfApp1
             return false;
         }
 
-        private void ReadLightweightContainerSummary(
-            string contextName,
-            out int runningContainerCount,
-            out double totalCpuPercent,
-            out double totalMemoryUsedBytes)
-        {
-            runningContainerCount = 0;
-            totalCpuPercent = 0;
-            totalMemoryUsedBytes = 0;
+        private const string LightweightImagesBeginMarker = "__WPFAPP1_9F31_IMAGES_BEGIN__";
+        private const string LightweightImagesEndMarker = "__WPFAPP1_9F31_IMAGES_END__";
+        private const string LightweightStatsBeginMarker = "__WPFAPP1_9F31_STATS_BEGIN__";
+        private const string LightweightStatsEndMarker = "__WPFAPP1_9F31_STATS_END__";
+        private const string LightweightInfoBeginMarker = "__WPFAPP1_9F31_INFO_BEGIN__";
+        private const string LightweightInfoEndMarker = "__WPFAPP1_9F31_INFO_END__";
+        private const string LightweightDiskBeginMarker = "__WPFAPP1_9F31_DISK_BEGIN__";
+        private const string LightweightDiskEndMarker = "__WPFAPP1_9F31_DISK_END__";
+        private const string LightweightCompleteMarker = "__WPFAPP1_9F31_COMPLETE__";
 
-            string output;
-            if (!TryRunDockerCommand(
-                "stats --no-stream --no-trunc --format \"{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}\"",
-                contextName,
-                out output))
+        private bool TryReadLightweightDockerData(string contextName, out LightweightDockerData data)
+        {
+            data = null;
+            string identity;
+            if (!TryResolveSshIdentityForContext(contextName, out identity) || string.IsNullOrWhiteSpace(identity))
             {
-                return;
+                return false;
             }
 
-            var lines = (output ?? string.Empty)
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            runningContainerCount = lines.Length;
-
-            for (var i = 0; i < lines.Length; i++)
+            string user;
+            string host;
+            string password;
+            if (!TryResolveSshTarget(identity, out user, out host, out password))
             {
-                var parts = lines[i].Split('|');
-                if (parts.Length < 3)
+                return false;
+            }
+
+            var dockerExecutables = new[] { "docker", "/usr/bin/docker", "/usr/local/bin/docker" };
+            var candidates = new List<Tuple<string, bool>>();
+            for (var i = 0; i < dockerExecutables.Length; i++)
+            {
+                candidates.Add(Tuple.Create(dockerExecutables[i], false));
+            }
+            for (var i = 0; i < dockerExecutables.Length; i++)
+            {
+                candidates.Add(Tuple.Create(dockerExecutables[i], true));
+            }
+
+            var targetIdentity = BuildSshTargetIdentity(user, host);
+            var candidateIndexes = BuildSshCandidateOrder(targetIdentity, candidates.Count);
+            var bestError = string.Empty;
+            for (var orderIndex = 0; orderIndex < candidateIndexes.Count; orderIndex++)
+            {
+                var candidateIndex = candidateIndexes[orderIndex];
+                var candidate = candidates[candidateIndex];
+                var script = BuildLightweightDockerBatchScript(candidate.Item1, candidate.Item2, password);
+                string stdOut;
+                string stdErr;
+                var ok = ExecuteSshRemoteCommand(
+                    user,
+                    host,
+                    password,
+                    script,
+                    30000,
+                    out stdOut,
+                    out stdErr,
+                    "ssh-batch-candidate[" + candidateIndex.ToString(CultureInfo.InvariantCulture) + "]");
+
+                LightweightDockerData parsed;
+                var parseError = string.Empty;
+                if (ok && TryParseLightweightDockerBatchOutput(contextName, stdOut, out parsed, out parseError))
                 {
-                    continue;
+                    _preferredSshDockerCandidateIndex[targetIdentity] = candidateIndex;
+                    _lastSshErrorByTarget.Remove(targetIdentity);
+                    data = parsed;
+                    return true;
                 }
 
+                bestError = !string.IsNullOrWhiteSpace(parseError)
+                    ? parseError
+                    : (!string.IsNullOrWhiteSpace(stdErr) ? stdErr.Trim() : (stdOut ?? string.Empty).Trim());
+            }
+
+            if (string.IsNullOrWhiteSpace(bestError))
+            {
+                bestError = "轻量批量读取失败（无可用输出）。";
+            }
+            _lastSshErrorByTarget[targetIdentity] = bestError;
+            Debug.WriteLine("Lightweight SSH batch failed: " + targetIdentity + " | " + bestError);
+            return false;
+        }
+
+        private List<int> BuildSshCandidateOrder(string targetIdentity, int candidateCount)
+        {
+            var result = new List<int>();
+            int preferredIndex;
+            if (_preferredSshDockerCandidateIndex.TryGetValue(targetIdentity, out preferredIndex) &&
+                preferredIndex >= 0 &&
+                preferredIndex < candidateCount)
+            {
+                result.Add(preferredIndex);
+            }
+
+            for (var i = 0; i < candidateCount; i++)
+            {
+                if (!result.Contains(i))
+                {
+                    result.Add(i);
+                }
+            }
+            return result;
+        }
+
+        private static string BuildLightweightDockerBatchScript(string dockerExecutable, bool useSudo, string password)
+        {
+            var dockerFunction = useSudo
+                ? string.Format(
+                    "docker_cmd() {{ printf '%s\\n' '{0}' | sudo -S -p '' {1} \"$@\"; }}; ",
+                    EscapeShellSingleQuoted(password),
+                    dockerExecutable)
+                : string.Format("docker_cmd() {{ {0} \"$@\"; }}; ", dockerExecutable);
+
+            return "set -e; export LC_ALL=C; " + dockerFunction +
+                   "printf '%s\\n' '" + LightweightImagesBeginMarker + "'; " +
+                   "docker_cmd image ls --no-trunc --format '{{.ID}}|{{.Repository}}|{{.Tag}}|{{.CreatedAt}}|{{.Size}}'; " +
+                   "printf '%s\\n' '" + LightweightImagesEndMarker + "' '" + LightweightStatsBeginMarker + "'; " +
+                   "docker_cmd stats --no-stream --no-trunc --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}'; " +
+                   "printf '%s\\n' '" + LightweightStatsEndMarker + "' '" + LightweightInfoBeginMarker + "'; " +
+                   "info_line=$(docker_cmd info --format '{{.NCPU}}|{{.MemTotal}}|{{.DockerRootDir}}'); " +
+                   "printf '%s\\n' \"$info_line\"; " +
+                   "printf '%s\\n' '" + LightweightInfoEndMarker + "' '" + LightweightDiskBeginMarker + "'; " +
+                   "docker_root=$(printf '%s\\n' \"$info_line\" | awk -F'|' 'NR==1 {print $3}'); " +
+                   "test -n \"$docker_root\"; " +
+                   "df -P \"$docker_root\" | awk 'NR==2 {gsub(\"%\",\"\",$5); print $5}'; " +
+                   "printf '%s\\n' '" + LightweightDiskEndMarker + "' '" + LightweightCompleteMarker + "'";
+        }
+
+        private bool TryParseLightweightDockerBatchOutput(
+            string contextName,
+            string output,
+            out LightweightDockerData data,
+            out string error)
+        {
+            data = null;
+            error = string.Empty;
+            string imagesSection;
+            string statsSection;
+            string infoSection;
+            string diskSection;
+            if (!TryExtractMarkedSection(output, LightweightImagesBeginMarker, LightweightImagesEndMarker, out imagesSection) ||
+                !TryExtractMarkedSection(output, LightweightStatsBeginMarker, LightweightStatsEndMarker, out statsSection) ||
+                !TryExtractMarkedSection(output, LightweightInfoBeginMarker, LightweightInfoEndMarker, out infoSection) ||
+                !TryExtractMarkedSection(output, LightweightDiskBeginMarker, LightweightDiskEndMarker, out diskSection) ||
+                !ContainsUniqueMarker(output, LightweightCompleteMarker))
+            {
+                error = "轻量批量读取返回的分段标记不完整。";
+                return false;
+            }
+
+            var infoLine = infoSection.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            var infoParts = (infoLine ?? string.Empty).Split('|');
+            double hostCpuCores;
+            long hostMemoryTotalBytes;
+            if (infoParts.Length < 3 ||
+                !double.TryParse(infoParts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out hostCpuCores) ||
+                hostCpuCores <= 0 ||
+                !long.TryParse(infoParts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out hostMemoryTotalBytes) ||
+                hostMemoryTotalBytes <= 0 ||
+                string.IsNullOrWhiteSpace(infoParts[2]))
+            {
+                error = "轻量批量读取返回的主机容量或 DockerRootDir 无效。";
+                return false;
+            }
+
+            double diskUsagePercent;
+            var diskLine = diskSection.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            if (!TryParseUsagePercent(diskLine, out diskUsagePercent))
+            {
+                error = "轻量批量读取返回的 Docker 磁盘使用率无效。";
+                return false;
+            }
+
+            var statsLines = statsSection.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var totalCpuPercent = 0d;
+            var totalMemoryUsedBytes = 0d;
+            for (var i = 0; i < statsLines.Length; i++)
+            {
+                var parts = statsLines[i].Split('|');
+                if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[0]))
+                {
+                    error = "轻量批量读取返回的容器汇总记录格式无效。";
+                    return false;
+                }
                 totalCpuPercent += ParsePercent(parts[1]);
                 totalMemoryUsedBytes += ExtractMemoryUsedBytes(parts[2]);
             }
-        }
-
-        private void ReadHostCapacityForContainerSummary(
-            string contextName,
-            out double hostCpuCores,
-            out double hostMemoryTotalBytes)
-        {
-            hostCpuCores = 0;
-            hostMemoryTotalBytes = 0;
 
             var key = (contextName ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(key))
+            _hostCpuLimitTextByContext[key] = hostCpuCores.ToString("0.##", CultureInfo.InvariantCulture);
+            _hostMemoryLimitMbByContext[key] = (int)Math.Max(
+                1,
+                Math.Min(int.MaxValue, hostMemoryTotalBytes / (1024L * 1024L)));
+
+            data = new LightweightDockerData(
+                ParseDockerImages(imagesSection),
+                statsLines.Length,
+                Math.Max(0, Math.Min(100, totalCpuPercent / hostCpuCores)),
+                Math.Max(0, Math.Min(100, totalMemoryUsedBytes * 100d / hostMemoryTotalBytes)),
+                diskUsagePercent);
+            return true;
+        }
+
+        private static bool TryExtractMarkedSection(string output, string beginMarker, string endMarker, out string section)
+        {
+            section = string.Empty;
+            var lines = (output ?? string.Empty).Replace("\r", string.Empty).Split('\n');
+            var beginIndexes = Enumerable.Range(0, lines.Length).Where(i => string.Equals(lines[i].Trim(), beginMarker, StringComparison.Ordinal)).ToList();
+            var endIndexes = Enumerable.Range(0, lines.Length).Where(i => string.Equals(lines[i].Trim(), endMarker, StringComparison.Ordinal)).ToList();
+            if (beginIndexes.Count != 1 || endIndexes.Count != 1 || endIndexes[0] <= beginIndexes[0])
             {
-                return;
+                return false;
             }
 
-            string output;
-            if (!TryRunDockerCommand(
-                "info --format \"{{.NCPU}}|{{.MemTotal}}\"",
-                key,
-                out output,
-                12000))
-            {
-                return;
-            }
+            section = string.Join("\n", lines.Skip(beginIndexes[0] + 1).Take(endIndexes[0] - beginIndexes[0] - 1));
+            return true;
+        }
 
-            var line = (output ?? string.Empty)
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .LastOrDefault();
-            var parts = (line ?? string.Empty).Split('|');
-            if (parts.Length < 2)
-            {
-                return;
-            }
-
-            double parsedCpuCores;
-            if (double.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out parsedCpuCores) &&
-                parsedCpuCores > 0)
-            {
-                hostCpuCores = parsedCpuCores;
-                _hostCpuLimitTextByContext[key] = parsedCpuCores.ToString("0.##", CultureInfo.InvariantCulture);
-            }
-
-            long parsedMemoryBytes;
-            if (long.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out parsedMemoryBytes) &&
-                parsedMemoryBytes > 0)
-            {
-                hostMemoryTotalBytes = parsedMemoryBytes;
-                var totalMb = parsedMemoryBytes / (1024L * 1024L);
-                _hostMemoryLimitMbByContext[key] = (int)Math.Max(1, Math.Min(int.MaxValue, totalMb));
-            }
+        private static bool ContainsUniqueMarker(string output, string marker)
+        {
+            return (output ?? string.Empty)
+                .Replace("\r", string.Empty)
+                .Split('\n')
+                .Count(line => string.Equals(line.Trim(), marker, StringComparison.Ordinal)) == 1;
         }
 
         private Dictionary<string, DockerContainerStatsInfo> ReadDockerContainerStats(string contextName)
@@ -3672,7 +3994,7 @@ namespace WpfApp1
 
             string stdOut;
             string stdErr;
-            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr))
+            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr, "ssh-host-resource"))
             {
                 return false;
             }
@@ -3879,7 +4201,7 @@ namespace WpfApp1
 
             string stdOut;
             string stdErr;
-            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr))
+            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr, "ssh-df"))
             {
                 return false;
             }
@@ -4252,16 +4574,11 @@ namespace WpfApp1
         private bool TryRunDockerCommand(string commandArgs, string contextName, out string output, int timeoutMs = 12000)
         {
             output = string.Empty;
-            var sw = Stopwatch.StartNew();
-            var route = "docker-local";
             var ok = false;
             if (!string.IsNullOrWhiteSpace(contextName) && contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 var identity = contextName.Substring(SshContextPrefix.Length).Trim();
-                route = "docker-ssh";
                 ok = TryRunDockerCommandOverSsh(identity, commandArgs, out output, timeoutMs);
-                sw.Stop();
-                AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                 return ok;
             }
 
@@ -4316,15 +4633,10 @@ namespace WpfApp1
                         Debug.WriteLine("Docker command timeout: " + args);
                         if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
                         {
-                            route = "docker-fallback-ssh";
                             ok = TryRunDockerCommandOverSsh(fallbackSshIdentity, commandArgs, out output, timeoutMs);
-                            sw.Stop();
-                            AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                             return ok;
                         }
 
-                        sw.Stop();
-                        AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, false);
                         return false;
                     }
                     string stdOut;
@@ -4343,21 +4655,14 @@ namespace WpfApp1
                         output = merged;
                         if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
                         {
-                            route = "docker-fallback-ssh";
                             ok = TryRunDockerCommandOverSsh(fallbackSshIdentity, commandArgs, out output, timeoutMs);
-                            sw.Stop();
-                            AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                             return ok;
                         }
 
-                        sw.Stop();
-                        AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, false);
                         return false;
                     }
 
                     output = stdOut;
-                    sw.Stop();
-                    AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, true);
                     return true;
                 }
             }
@@ -4366,15 +4671,10 @@ namespace WpfApp1
                 Debug.WriteLine("Docker command exception: " + ex.Message);
                 if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
                 {
-                    route = "docker-fallback-ssh";
                     ok = TryRunDockerCommandOverSsh(fallbackSshIdentity, commandArgs, out output, timeoutMs);
-                    sw.Stop();
-                    AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                     return ok;
                 }
 
-                sw.Stop();
-                AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, false);
                 return false;
             }
         }
@@ -4531,14 +4831,11 @@ namespace WpfApp1
         private bool TryRunDockerCommandOverSsh(string targetIdentity, string commandArgs, out string output, int timeoutMs)
         {
             output = string.Empty;
-            var sw = Stopwatch.StartNew();
             string user;
             string host;
             string password;
             if (!TryResolveSshTarget(targetIdentity, out user, out host, out password))
             {
-                sw.Stop();
-                AppendReadTiming("ssh-resolve", targetIdentity, commandArgs, sw.ElapsedMilliseconds, false);
                 return false;
             }
 
@@ -4595,14 +4892,20 @@ namespace WpfApp1
                 var i = candidateIndexes[k];
                 string stdOut;
                 string stdErr;
-                var ok = ExecuteSshRemoteCommand(user, host, password, candidates[i], effectiveTimeoutMs, out stdOut, out stdErr);
+                var ok = ExecuteSshRemoteCommand(
+                    user,
+                    host,
+                    password,
+                    candidates[i],
+                    effectiveTimeoutMs,
+                    out stdOut,
+                    out stdErr,
+                    "ssh-docker-candidate[" + i.ToString(CultureInfo.InvariantCulture) + "]");
                 if (ok)
                 {
                     output = stdOut;
                     _lastSshErrorByTarget.Remove(identity);
                     _preferredSshDockerCandidateIndex[identity] = i;
-                    sw.Stop();
-                    AppendReadTiming("ssh-candidate[" + i.ToString(CultureInfo.InvariantCulture) + "]", targetIdentity, commandArgs, sw.ElapsedMilliseconds, true);
                     return true;
                 }
 
@@ -4625,8 +4928,6 @@ namespace WpfApp1
 
             _lastSshErrorByTarget[identity] = bestErrorText;
             Debug.WriteLine("SSH docker command failed after retries: " + identity + " | " + commandArgs + " | " + bestErrorText);
-            sw.Stop();
-            AppendReadTiming("ssh-candidates", targetIdentity, commandArgs, sw.ElapsedMilliseconds, false);
             return false;
         }
 
@@ -4635,6 +4936,7 @@ namespace WpfApp1
             lock (_readTimingLock)
             {
                 _readTimingRecords.Clear();
+                _readWallClock = Stopwatch.StartNew();
                 _isCollectingReadTimings = true;
             }
         }
@@ -4644,6 +4946,10 @@ namespace WpfApp1
             lock (_readTimingLock)
             {
                 _isCollectingReadTimings = false;
+                if (_readWallClock != null && _readWallClock.IsRunning)
+                {
+                    _readWallClock.Stop();
+                }
             }
         }
 
@@ -4668,17 +4974,16 @@ namespace WpfApp1
         private string BuildReadTimingSummary()
         {
             List<ReadTimingRecord> snapshot;
+            long wallClockMs;
             lock (_readTimingLock)
             {
                 snapshot = _readTimingRecords.ToList();
-            }
-
-            if (snapshot.Count == 0)
-            {
-                return "无可用耗时数据。";
+                wallClockMs = _readWallClock == null ? 0 : _readWallClock.ElapsedMilliseconds;
             }
 
             var totalMs = snapshot.Sum(r => r.ElapsedMs);
+            var successCount = snapshot.Count(r => r.Success);
+            var failedCount = snapshot.Count - successCount;
             var top = snapshot
                 .OrderByDescending(r => r.ElapsedMs)
                 .Take(8)
@@ -4686,9 +4991,16 @@ namespace WpfApp1
 
             var lines = new List<string>
             {
-                string.Format("总命令数: {0}，累计耗时: {1} ms", snapshot.Count, totalMs),
+                string.Format("真实墙钟总耗时: {0} ms", wallClockMs),
+                string.Format("实际远程命令数: {0}（成功 {1}，失败 {2}）", snapshot.Count, successCount, failedCount),
+                string.Format("远程命令累计耗时: {0} ms", totalMs),
                 "最慢命令 Top 8:"
             };
+
+            if (top.Count == 0)
+            {
+                lines.Add("无 SSH 命令记录。");
+            }
 
             for (var i = 0; i < top.Count; i++)
             {
@@ -4837,11 +5149,22 @@ namespace WpfApp1
             return (value ?? string.Empty).Replace("'", "'\"'\"'");
         }
 
-        private bool ExecuteSshRemoteCommand(string user, string host, string sshPassword, string remoteCommandRaw, int timeoutMs, out string stdOut, out string stdErr)
+        private bool ExecuteSshRemoteCommand(
+            string user,
+            string host,
+            string sshPassword,
+            string remoteCommandRaw,
+            int timeoutMs,
+            out string stdOut,
+            out string stdErr,
+            string timingRoute = "ssh")
         {
             stdOut = string.Empty;
             stdErr = string.Empty;
 
+            var timingContext = BuildSshTargetIdentity(user, host);
+            var timingCommand = SanitizeReadTimingCommand(remoteCommandRaw, sshPassword);
+            var timingStopwatch = Stopwatch.StartNew();
             var remoteCommand = (remoteCommandRaw ?? string.Empty).Replace("\"", "\\\"");
             var sshExecutable = ResolveSshExecutablePath();
             if (string.IsNullOrWhiteSpace(sshExecutable))
@@ -4878,7 +5201,16 @@ namespace WpfApp1
                     if (process == null)
                     {
                         stdErr = "无法启动 ssh 进程（ASKPASS）。";
-                        return TryExecuteSshWithStdinPassword(sshExecutable, commonArgs, sshPassword, timeoutMs, out stdOut, out stdErr);
+                        var fallbackOk = TryExecuteSshWithStdinPassword(
+                            sshExecutable,
+                            commonArgs,
+                            sshPassword,
+                            timeoutMs,
+                            out stdOut,
+                            out stdErr);
+                        timingStopwatch.Stop();
+                        AppendReadTiming(timingRoute + "-stdin-fallback", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                        return fallbackOk;
                     }
 
                     var stdOutTask = process.StandardOutput.ReadToEndAsync();
@@ -4886,8 +5218,10 @@ namespace WpfApp1
                     if (!process.WaitForExit(timeoutMs))
                     {
                         try { process.Kill(); } catch { }
-                        Debug.WriteLine("SSH remote command timeout: " + user + "@" + host + " | " + remoteCommandRaw);
+                        Debug.WriteLine("SSH remote command timeout: " + user + "@" + host + " | " + timingCommand);
                         stdErr = "SSH 执行超时（ASKPASS 模式）。";
+                        timingStopwatch.Stop();
+                        AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
                         return false;
                     }
 
@@ -4896,9 +5230,20 @@ namespace WpfApp1
                     if (process.ExitCode != 0)
                     {
                         // fallback to stdin password mode
-                        return TryExecuteSshWithStdinPassword(sshExecutable, commonArgs, sshPassword, timeoutMs, out stdOut, out stdErr);
+                        var fallbackOk = TryExecuteSshWithStdinPassword(
+                            sshExecutable,
+                            commonArgs,
+                            sshPassword,
+                            timeoutMs,
+                            out stdOut,
+                            out stdErr);
+                        timingStopwatch.Stop();
+                        AppendReadTiming(timingRoute + "-askpass+stdin", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                        return fallbackOk;
                     }
 
+                    timingStopwatch.Stop();
+                    AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, true);
                     return true;
                 }
             }
@@ -4906,7 +5251,7 @@ namespace WpfApp1
             {
                 Debug.WriteLine("SSH remote command exception: " + ex.Message);
                 stdErr = "SSH 执行异常: " + ex.Message;
-                return TryExecuteSshWithStdinPassword(
+                var fallbackOk = TryExecuteSshWithStdinPassword(
                     sshExecutable,
                     string.Format(
                         "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
@@ -4917,6 +5262,9 @@ namespace WpfApp1
                     timeoutMs,
                     out stdOut,
                     out stdErr);
+                timingStopwatch.Stop();
+                AppendReadTiming(timingRoute + "-stdin-fallback", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                return fallbackOk;
             }
             finally
             {
@@ -4986,7 +5334,13 @@ namespace WpfApp1
             return "ssh";
         }
 
-        private bool TryExecuteSshWithStdinPassword(string sshExecutable, string commonArgs, string sshPassword, int timeoutMs, out string stdOut, out string stdErr)
+        private bool TryExecuteSshWithStdinPassword(
+            string sshExecutable,
+            string commonArgs,
+            string sshPassword,
+            int timeoutMs,
+            out string stdOut,
+            out string stdErr)
         {
             stdOut = string.Empty;
             stdErr = string.Empty;
@@ -5026,7 +5380,8 @@ namespace WpfApp1
 
                     CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
 
-                    return process.ExitCode == 0;
+                    var ok = process.ExitCode == 0;
+                    return ok;
                 }
             }
             catch (Exception ex)
@@ -5034,6 +5389,23 @@ namespace WpfApp1
                 stdErr = "SSH STDIN 模式异常: " + ex.Message;
                 return false;
             }
+        }
+
+        private static string SanitizeReadTimingCommand(string command, string password)
+        {
+            var value = command ?? string.Empty;
+            if (value.IndexOf(LightweightImagesBeginMarker, StringComparison.Ordinal) >= 0 ||
+                value.IndexOf(LightweightCompleteMarker, StringComparison.Ordinal) >= 0)
+            {
+                return "lightweight-batch";
+            }
+
+            if (!string.IsNullOrEmpty(password))
+            {
+                value = value.Replace(password, "***");
+                value = value.Replace(EscapeShellSingleQuoted(password), "***");
+            }
+            return value;
         }
 
         private async Task RefreshDeviceImageRowsFastAsync(string selectedDeviceName)
@@ -8635,26 +9007,47 @@ namespace WpfApp1
             FullDetails
         }
 
+        private enum SnapshotApplyMode
+        {
+            ReplaceAll,
+            MergeDevices
+        }
+
+        private sealed class LightweightDockerData
+        {
+            public LightweightDockerData(
+                List<DockerImageInfo> images,
+                int runningContainerCount,
+                double cpuUsagePercent,
+                double memoryUsagePercent,
+                double diskUsagePercent)
+            {
+                Images = images ?? new List<DockerImageInfo>();
+                RunningContainerCount = runningContainerCount;
+                CpuUsagePercent = cpuUsagePercent;
+                MemoryUsagePercent = memoryUsagePercent;
+                DiskUsagePercent = diskUsagePercent;
+            }
+
+            public List<DockerImageInfo> Images { get; }
+            public int RunningContainerCount { get; }
+            public double CpuUsagePercent { get; }
+            public double MemoryUsagePercent { get; }
+            public double DiskUsagePercent { get; }
+        }
+
         private sealed class DockerRuntimeSnapshot
         {
             public DockerRuntimeSnapshot(
                 List<DeviceInfo> devices,
                 List<DeviceImageRow> deviceImageRows,
                 List<ContainerComposeRow> containerRows,
-                List<ImageComposeRow> sourceImages,
-                List<ImageComposeRow> preparedImages,
-                List<ProgramFileRow> programFiles,
-                List<DeployImageCard> strategyImages,
                 Dictionary<string, string> deviceContexts,
                 ContainerReadMode containerReadMode)
             {
                 Devices = devices;
                 DeviceImageRows = deviceImageRows;
                 ContainerRows = containerRows;
-                SourceImages = sourceImages;
-                PreparedImages = preparedImages;
-                ProgramFiles = programFiles;
-                StrategyImages = strategyImages;
                 DeviceContexts = deviceContexts;
                 ContainerReadMode = containerReadMode;
             }
@@ -8662,10 +9055,6 @@ namespace WpfApp1
             public List<DeviceInfo> Devices { get; }
             public List<DeviceImageRow> DeviceImageRows { get; }
             public List<ContainerComposeRow> ContainerRows { get; }
-            public List<ImageComposeRow> SourceImages { get; }
-            public List<ImageComposeRow> PreparedImages { get; }
-            public List<ProgramFileRow> ProgramFiles { get; }
-            public List<DeployImageCard> StrategyImages { get; }
             public Dictionary<string, string> DeviceContexts { get; }
             public ContainerReadMode ContainerReadMode { get; }
         }
