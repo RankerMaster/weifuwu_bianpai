@@ -18,6 +18,11 @@ namespace WpfApp1
         private readonly Dictionary<string, CancellationTokenSource> _containerRefreshCancellations = new Dictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, bool> _containerDeviceOnline = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _containerIdsInOperation = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _remoteDockerRouteLock = new object();
+        private readonly Dictionary<string, RemoteDockerRoute> _remoteDockerRoutes = new Dictionary<string, RemoteDockerRoute>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _containerSizeCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _lightweightDetailCacheLock = new object();
+        private readonly Dictionary<string, LightweightDetailSnapshot> _lightweightDetailCache = new Dictionary<string, LightweightDetailSnapshot>(StringComparer.OrdinalIgnoreCase);
 
         private async void ServiceContainerButton_OnClick(object sender, RoutedEventArgs e)
         {
@@ -65,8 +70,9 @@ namespace WpfApp1
             }
 
             SetContainerPageState("缓存数据，正在验证设备", false, false);
-            var summaryVersion = InvalidateContainerRefresh(contextName);
-            var query = await Task.Run(() => QueryContainerSummary(contextName));
+            var refreshState = BeginContainerDetailRefresh(contextName);
+            var summaryVersion = refreshState.Item1;
+            var query = await Task.Run(() => QueryContainerSummary(contextName, refreshState.Item2));
 
             if (!string.Equals(deviceName, GetSelectedContainerDeviceName(), StringComparison.OrdinalIgnoreCase))
             {
@@ -90,22 +96,29 @@ namespace WpfApp1
             SetContainerDeviceOnline(contextName, true);
             SetContainerPageState(query.Containers.Count == 0 ? "暂无容器" : "设备在线，概要已同步", true, false);
 
-            var refreshState = BeginContainerDetailRefresh(contextName);
             var containerIdSnapshot = BuildContainerIdSnapshot(query.Containers);
             StartContainerDetailsRefresh(contextName, deviceName, query.Containers, containerIdSnapshot, refreshState.Item1, refreshState.Item2);
         }
 
-        private ContainerSummaryQueryResult QueryContainerSummary(string contextName)
+        private ContainerSummaryQueryResult QueryContainerSummary(
+            string contextName,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
-            string output;
+            var stopwatch = Stopwatch.StartNew();
             const string command = "ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}\"";
-            if (!TryRunDockerCommand(command, contextName, out output, 10000))
+            var execution = ExecuteDockerCommandDetailed(command, contextName, 10000, cancellationToken);
+            stopwatch.Stop();
+            RecordContainerRefreshTiming("container-summary", contextName, command, stopwatch.ElapsedMilliseconds, execution.Succeeded);
+            if (!execution.Succeeded)
             {
-                return ContainerSummaryQueryResult.Failed(output);
+                var error = string.IsNullOrWhiteSpace(execution.StandardError)
+                    ? execution.StandardOutput
+                    : execution.StandardError;
+                return ContainerSummaryQueryResult.Failed(error);
             }
 
             var containers = new List<DockerContainerInfo>();
-            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = execution.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
                 var parts = lines[i].Split('|');
@@ -140,24 +153,45 @@ namespace WpfApp1
 
         private void ApplyContainerSummary(string contextName, string deviceName, List<DockerContainerInfo> containers)
         {
-            InvalidateContainerRefresh(contextName);
             var remoteRows = containers ?? new List<DockerContainerInfo>();
             var remoteIds = new HashSet<string>(remoteRows.Select(c => c.Id), StringComparer.OrdinalIgnoreCase);
 
             _containerRows.RemoveAll(row =>
                 string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
                 !remoteIds.Contains(row.FullId ?? string.Empty));
+            var sizeKeyPrefix = contextName + "|";
+            foreach (var staleSizeKey in _containerSizeCache.Keys
+                .Where(key => key.StartsWith(sizeKeyPrefix, StringComparison.OrdinalIgnoreCase) &&
+                              !remoteIds.Contains(key.Substring(sizeKeyPrefix.Length)))
+                .ToList())
+            {
+                _containerSizeCache.Remove(staleSizeKey);
+            }
+
+            var rowIndexes = _containerRows
+                .Select((row, index) => new { Row = row, Index = index })
+                .Where(item => string.Equals(item.Row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
+                               !string.IsNullOrWhiteSpace(item.Row.FullId))
+                .GroupBy(item => item.Row.FullId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.OrdinalIgnoreCase);
 
             for (var i = 0; i < remoteRows.Count; i++)
             {
                 var container = remoteRows[i];
-                var index = _containerRows.FindIndex(row =>
-                    string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(row.FullId, container.Id, StringComparison.OrdinalIgnoreCase));
+                int index;
+                if (!rowIndexes.TryGetValue(container.Id, out index))
+                {
+                    index = -1;
+                }
                 var normalizedName = container.Name.StartsWith("/", StringComparison.Ordinal) ? container.Name : "/" + container.Name;
 
                 if (index < 0)
                 {
+                    string cachedSize;
+                    if (!_containerSizeCache.TryGetValue(contextName + "|" + container.Id, out cachedSize))
+                    {
+                        cachedSize = "-";
+                    }
                     _containerRows.Add(new ContainerComposeRow(
                         deviceName,
                         ShortContainerId(container.Id),
@@ -169,7 +203,8 @@ namespace WpfApp1
                         "-", "-", "-", "-", "-",
                         container.Status,
                         container.Id,
-                        "-"));
+                        cachedSize));
+                    rowIndexes[container.Id] = _containerRows.Count - 1;
                     continue;
                 }
 
@@ -244,6 +279,25 @@ namespace WpfApp1
             }
         }
 
+        private void CancelAllContainerBackgroundRefreshes()
+        {
+            lock (_containerRefreshStateLock)
+            {
+                foreach (var source in _containerRefreshCancellations.Values.ToList())
+                {
+                    source.Cancel();
+                    source.Dispose();
+                }
+
+                _containerRefreshCancellations.Clear();
+                var keys = _containerRefreshVersions.Keys.ToList();
+                for (var i = 0; i < keys.Count; i++)
+                {
+                    _containerRefreshVersions[keys[i]] = _containerRefreshVersions[keys[i]] + 1;
+                }
+            }
+        }
+
         private bool IsContainerRefreshVersionCurrent(string contextName, int version)
         {
             lock (_containerRefreshStateLock)
@@ -277,8 +331,11 @@ namespace WpfApp1
         {
             try
             {
-                var fixedContainerIds = (containerIdSnapshot ?? new List<string>()).ToList();
-                if (fixedContainerIds.Count == 0)
+                var fixedContainerIds = (containerIdSnapshot ?? new List<string>())
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (fixedContainerIds.Count == 0 || !IsContainerRefreshCurrent(contextName, version, token))
                 {
                     return;
                 }
@@ -288,58 +345,129 @@ namespace WpfApp1
                     .Where(container => container != null && allowedIds.Contains(container.Id))
                     .GroupBy(container => container.Id, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-                var statsById = await Task.Run(() => ReadDockerContainerStats(contextName));
-                if (!IsContainerRefreshCurrent(contextName, version, token))
+                var batches = BuildContainerIdBatches(fixedContainerIds, 40, 6000);
+                LightweightDetailSnapshot cachedSnapshot;
+                var hasFreshSnapshot = TryGetFreshLightweightDetailSnapshot(contextName, out cachedSnapshot);
+                var statsById = hasFreshSnapshot
+                    ? new Dictionary<string, DockerContainerStatsInfo>(cachedSnapshot.StatsById, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
+                var hostCpuLimitText = hasFreshSnapshot ? cachedSnapshot.HostCpuLimitText : string.Empty;
+                var batchResults = new List<ContainerDetailBatchResult>();
+                DockerCommandExecutionResult aggregateExecution;
+
+                if (contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    return;
+                    var combined = await Task.Run(() => ReadCombinedRemoteContainerDetails(
+                        contextName, batches, allowedIds, summaryById, statsById, hostCpuLimitText, hasFreshSnapshot, token));
+                    if (!IsContainerRefreshCurrent(contextName, version, token) || combined.Execution.Cancelled)
+                    {
+                        return;
+                    }
+
+                    statsById = combined.StatsById;
+                    hostCpuLimitText = combined.HostCpuLimitText;
+                    batchResults.AddRange(combined.Batches);
+                    aggregateExecution = combined.Execution;
+                }
+                else
+                {
+                    var statsWatch = Stopwatch.StartNew();
+                    if (!hasFreshSnapshot)
+                    {
+                        var statsExecution = await Task.Run(() => ExecuteDockerCommandDetailed(
+                            "stats --no-stream --no-trunc --format \"{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.BlockIO}}\"",
+                            contextName, 30000, token));
+                        statsById = ParseDockerContainerStatsOutput(statsExecution.StandardOutput);
+                        var infoExecution = await Task.Run(() => ExecuteDockerCommandDetailed(
+                            "info --format \"{{.NCPU}}\"", contextName, 15000, token));
+                        hostCpuLimitText = ParseHostCpuLimitText(infoExecution.StandardOutput);
+                    }
+                    statsWatch.Stop();
+                    RecordContainerRefreshTiming("container-stats-info", contextName, "stats/info", statsWatch.ElapsedMilliseconds, !token.IsCancellationRequested);
+
+                    aggregateExecution = DockerCommandExecutionResult.SuccessfulEmpty;
+                    for (var i = 0; i < batches.Count; i++)
+                    {
+                        if (!IsContainerRefreshCurrent(contextName, version, token))
+                        {
+                            return;
+                        }
+                        var batch = await Task.Run(() => ReadContainerDetailBatch(
+                            contextName, batches[i], allowedIds, new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            summaryById, hostCpuLimitText, token));
+                        batchResults.Add(batch);
+                        if (!batch.Execution.Succeeded)
+                        {
+                            aggregateExecution = batch.Execution;
+                        }
+                    }
                 }
 
-                var hostCpuLimitText = await Task.Run(() => ReadHostCpuLimitText(contextName));
+                if (statsById.Count > 0 && IsContainerRefreshCurrent(contextName, version, token))
+                {
+                    var statsUiWatch = Stopwatch.StartNew();
+                    await Dispatcher.InvokeAsync(() => ApplyContainerStatsBatch(
+                        contextName, deviceName, statsById, version, token));
+                    statsUiWatch.Stop();
+                    RecordContainerRefreshTiming("container-ui-stats", contextName, "rows=" + statsById.Count, statsUiWatch.ElapsedMilliseconds, true);
+                }
+
                 var appliedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                for (var i = 0; i < fixedContainerIds.Count; i += 15)
+                for (var i = 0; i < batchResults.Count; i++)
                 {
                     if (!IsContainerRefreshCurrent(contextName, version, token))
                     {
                         return;
                     }
 
-                    var batchIds = fixedContainerIds.Skip(i).Take(15).ToList();
-                    var appliedSnapshot = new HashSet<string>(appliedIds, StringComparer.OrdinalIgnoreCase);
-                    var batch = await Task.Run(() => ReadContainerDetailBatch(contextName, batchIds, allowedIds, appliedSnapshot, summaryById, hostCpuLimitText));
-                    if (!IsContainerRefreshCurrent(contextName, version, token))
+                    var accepted = batchResults[i].Details.Where(detail => appliedIds.Add(detail.FullId)).ToList();
+                    if (accepted.Count == 0)
                     {
-                        return;
+                        continue;
                     }
 
-                    var accepted = batch.Details.Where(detail => appliedIds.Add(detail.FullId)).ToList();
-                    if (accepted.Count > 0)
-                    {
-                        await Dispatcher.InvokeAsync(() => ApplyContainerDetailBatch(contextName, deviceName, accepted, statsById, version, token));
-                    }
+                    var uiWatch = Stopwatch.StartNew();
+                    await Dispatcher.InvokeAsync(() => ApplyContainerDetailBatch(
+                        contextName, deviceName, accepted, statsById, version, token));
+                    uiWatch.Stop();
+                    RecordContainerRefreshTiming("container-ui-batch", contextName, "rows=" + accepted.Count, uiWatch.ElapsedMilliseconds, true);
                 }
 
                 var missingIds = fixedContainerIds.Where(id => !appliedIds.Contains(id)).ToList();
-                for (var i = 0; i < missingIds.Count; i += 15)
+                if (missingIds.Count > 0 && IsRecoverableDetailFailure(aggregateExecution))
                 {
-                    if (!IsContainerRefreshCurrent(contextName, version, token))
+                    var retryBatches = BuildContainerIdBatches(missingIds, 40, 6000);
+                    for (var i = 0; i < retryBatches.Count; i++)
                     {
-                        return;
-                    }
+                        if (!IsContainerRefreshCurrent(contextName, version, token))
+                        {
+                            return;
+                        }
 
-                    var retryIds = missingIds.Skip(i).Take(15).ToList();
-                    var appliedSnapshot = new HashSet<string>(appliedIds, StringComparer.OrdinalIgnoreCase);
-                    var retryBatch = await Task.Run(() => ReadContainerDetailBatch(contextName, retryIds, allowedIds, appliedSnapshot, summaryById, hostCpuLimitText));
-                    if (!IsContainerRefreshCurrent(contextName, version, token))
-                    {
-                        return;
-                    }
+                        var retry = await Task.Run(() => ReadContainerDetailBatch(
+                            contextName, retryBatches[i], allowedIds, appliedIds,
+                            summaryById, hostCpuLimitText, token));
+                        if (retry.Execution.Cancelled)
+                        {
+                            return;
+                        }
 
-                    var accepted = retryBatch.Details.Where(detail => appliedIds.Add(detail.FullId)).ToList();
-                    if (accepted.Count > 0)
-                    {
-                        await Dispatcher.InvokeAsync(() => ApplyContainerDetailBatch(contextName, deviceName, accepted, statsById, version, token));
+                        var accepted = retry.Details.Where(detail => appliedIds.Add(detail.FullId)).ToList();
+                        if (accepted.Count > 0)
+                        {
+                            await Dispatcher.InvokeAsync(() => ApplyContainerDetailBatch(
+                                contextName, deviceName, accepted, statsById, version, token));
+                        }
                     }
                 }
+
+                if (IsContainerRefreshCurrent(contextName, version, token))
+                {
+                    StartContainerSizeLazyRefresh(contextName, deviceName, fixedContainerIds, version, token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
             }
             catch (Exception ex)
             {
@@ -353,7 +481,8 @@ namespace WpfApp1
             HashSet<string> allowedIds,
             HashSet<string> alreadyAppliedIds,
             Dictionary<string, DockerContainerInfo> summaryById,
-            string hostCpuLimitText)
+            string hostCpuLimitText,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             var ids = (containerIds ?? new List<string>())
                 .Where(id => !string.IsNullOrWhiteSpace(id))
@@ -363,24 +492,18 @@ namespace WpfApp1
                 return new ContainerDetailBatchResult(DockerCommandExecutionResult.NotStarted, new List<ContainerDetailResult>());
             }
 
-            const string format = "{{.Id}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.HostConfig.CpuQuota}}|{{.HostConfig.CpuPeriod}}|{{.HostConfig.CpusetCpus}}|{{json .HostConfig.PortBindings}}|{{json .Config.ExposedPorts}}|{{.SizeRw}}";
-            var command = "container inspect --size --format \"" + format + "\" " +
+            const string format = "{{.Id}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.HostConfig.CpuQuota}}|{{.HostConfig.CpuPeriod}}|{{.HostConfig.CpusetCpus}}|{{json .HostConfig.PortBindings}}|{{json .Config.ExposedPorts}}";
+            var command = "container inspect --format \"" + format + "\" " +
                           string.Join(" ", ids.Select(id => string.Format("\"{0}\"", id)));
-            var execution = ExecuteDockerCommandDetailed(command, contextName, 30000);
+            var stopwatch = Stopwatch.StartNew();
+            var execution = ExecuteDockerCommandDetailed(command, contextName, 30000, cancellationToken);
+            stopwatch.Stop();
+            RecordContainerRefreshTiming("container-inspect-batch", contextName, "ids=" + ids.Count, stopwatch.ElapsedMilliseconds, execution.Succeeded);
+            var parseWatch = Stopwatch.StartNew();
             var details = ParseContainerInspectBatch(
-                execution.StandardOutput,
-                allowedIds,
-                alreadyAppliedIds,
-                summaryById,
-                hostCpuLimitText);
-
-            if (!execution.Succeeded)
-            {
-                Debug.WriteLine(
-                    "Container detail batch inspect failed; valid stdout rows are retained. Exit=" +
-                    execution.ExitCode.ToString(CultureInfo.InvariantCulture) + " | stderr=" + execution.StandardError);
-            }
-
+                execution.StandardOutput, allowedIds, alreadyAppliedIds, summaryById, hostCpuLimitText);
+            parseWatch.Stop();
+            RecordContainerRefreshTiming("container-parse-batch", contextName, "ids=" + ids.Count, parseWatch.ElapsedMilliseconds, true);
             return new ContainerDetailBatchResult(execution, details);
         }
 
@@ -397,7 +520,7 @@ namespace WpfApp1
             for (var i = 0; i < lines.Length; i++)
             {
                 var parts = lines[i].Split('|');
-                if (parts.Length < 9)
+                if (parts.Length < 8)
                 {
                     continue;
                 }
@@ -422,8 +545,10 @@ namespace WpfApp1
                     summary == null ? string.Empty : summary.Ports,
                     parts[7],
                     out ports);
-                long sizeBytes;
-                var hasSize = long.TryParse((parts[8] ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out sizeBytes) && sizeBytes >= 0;
+                long sizeBytes = 0;
+                var hasSize = parts.Length > 8 &&
+                              long.TryParse((parts[8] ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out sizeBytes) &&
+                              sizeBytes >= 0;
                 if (!hasLimits && !hasPorts && !hasSize)
                 {
                     continue;
@@ -609,13 +734,17 @@ namespace WpfApp1
             }
 
             var changed = false;
+            var rowIndexes = _containerRows
+                .Select((row, index) => new { Row = row, Index = index })
+                .Where(item => string.Equals(item.Row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
+                               !string.IsNullOrWhiteSpace(item.Row.FullId))
+                .GroupBy(item => item.Row.FullId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.OrdinalIgnoreCase);
             for (var i = 0; i < details.Count; i++)
             {
                 var detail = details[i];
-                var index = _containerRows.FindIndex(row =>
-                    string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(row.FullId, detail.FullId, StringComparison.OrdinalIgnoreCase));
-                if (index < 0)
+                int index;
+                if (!rowIndexes.TryGetValue(detail.FullId, out index))
                 {
                     continue;
                 }
@@ -660,25 +789,421 @@ namespace WpfApp1
             }
         }
 
-        private DockerCommandExecutionResult ExecuteDockerCommandDetailed(string commandArgs, string contextName, int timeoutMs)
+        private void ApplyContainerStatsBatch(
+            string contextName,
+            string deviceName,
+            Dictionary<string, DockerContainerStatsInfo> statsById,
+            int version,
+            CancellationToken token)
         {
-            if (!string.IsNullOrWhiteSpace(contextName) && contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase))
+            if (!IsContainerRefreshCurrent(contextName, version, token) || statsById == null || statsById.Count == 0)
             {
-                var identity = contextName.Substring(SshContextPrefix.Length).Trim();
-                return ExecuteDockerCommandDetailedOverSsh(identity, commandArgs, timeoutMs);
+                return;
             }
 
-            var fallbackSshIdentity = string.Empty;
-            if (!string.IsNullOrWhiteSpace(contextName))
+            var indexes = _containerRows
+                .Select((row, index) => new { Row = row, Index = index })
+                .Where(item => string.Equals(item.Row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
+                               !string.IsNullOrWhiteSpace(item.Row.FullId))
+                .GroupBy(item => item.Row.FullId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.OrdinalIgnoreCase);
+            var changed = false;
+            foreach (var pair in indexes)
             {
-                string resolvedIdentity;
-                if (TryResolveSshIdentityForContext(contextName, out resolvedIdentity) &&
-                    _sshPasswordByTarget.ContainsKey(resolvedIdentity))
+                DockerContainerStatsInfo stats;
+                if (!TryGetContainerStats(statsById, pair.Key, out stats) || stats == null)
                 {
-                    fallbackSshIdentity = resolvedIdentity;
+                    continue;
+                }
+
+                var index = pair.Value;
+                var current = _containerRows[index];
+                if (string.Equals(current.CpuPercent, stats.CpuPercentText, StringComparison.Ordinal) &&
+                    string.Equals(current.MemoryUsage, stats.MemoryUsageText, StringComparison.Ordinal) &&
+                    string.Equals(current.MemoryPercent, stats.MemoryPercentText, StringComparison.Ordinal) &&
+                    string.Equals(current.DiskReadWrite, stats.BlockIoText, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                _containerRows[index] = new ContainerComposeRow(
+                    current.DeviceName, current.Id, current.Name, current.ChineseName, current.Image, current.Status,
+                    current.Ports, current.CpuCores, stats.CpuPercentText, stats.MemoryUsageText,
+                    stats.MemoryPercentText, stats.BlockIoText, current.Detail, current.FullId, current.Size);
+                changed = true;
+            }
+
+            if (changed && string.Equals(GetSelectedContainerDeviceName(), deviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                BindContainerRows(deviceName);
+            }
+        }
+
+        private static List<List<string>> BuildContainerIdBatches(IList<string> containerIds, int maximumCount, int maximumCommandLength)
+        {
+            var result = new List<List<string>>();
+            var current = new List<string>();
+            var currentLength = 0;
+            foreach (var rawId in containerIds ?? new List<string>())
+            {
+                var id = (rawId ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    continue;
+                }
+
+                var addedLength = id.Length + 3;
+                if (current.Count > 0 && (current.Count >= maximumCount || currentLength + addedLength > maximumCommandLength))
+                {
+                    result.Add(current);
+                    current = new List<string>();
+                    currentLength = 0;
+                }
+
+                current.Add(id);
+                currentLength += addedLength;
+            }
+
+            if (current.Count > 0)
+            {
+                result.Add(current);
+            }
+            return result;
+        }
+
+        private void RecordContainerRefreshTiming(
+            string stage,
+            string contextName,
+            string operation,
+            long elapsedMilliseconds,
+            bool succeeded)
+        {
+            Debug.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "[ContainerRefreshTiming] {0} | {1} | {2} | {3} ms | {4}",
+                stage,
+                contextName,
+                operation,
+                elapsedMilliseconds,
+                succeeded ? "OK" : "FAIL"));
+            AppendReadTiming(stage, contextName, operation, elapsedMilliseconds, succeeded);
+        }
+
+        private bool TryGetFreshLightweightDetailSnapshot(string contextName, out LightweightDetailSnapshot snapshot)
+        {
+            lock (_lightweightDetailCacheLock)
+            {
+                if (_lightweightDetailCache.TryGetValue((contextName ?? string.Empty).Trim(), out snapshot) &&
+                    DateTime.UtcNow - snapshot.CapturedUtc <= TimeSpan.FromSeconds(30))
+                {
+                    return true;
                 }
             }
 
+            snapshot = null;
+            return false;
+        }
+
+        private static string ParseHostCpuLimitText(string output)
+        {
+            double value;
+            var line = (output ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .LastOrDefault();
+            return double.TryParse((line ?? string.Empty).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value > 0
+                ? value.ToString("0.##", CultureInfo.InvariantCulture)
+                : "-";
+        }
+
+        private static bool IsRecoverableDetailFailure(DockerCommandExecutionResult execution)
+        {
+            if (execution == null || execution.Cancelled || execution.TimedOut)
+            {
+                return false;
+            }
+
+            if (execution.FailureKind == DockerCommandFailureKind.PartialOutput)
+            {
+                return true;
+            }
+
+            var error = (execution.StandardError ?? string.Empty).ToLowerInvariant();
+            return error.Contains("no such object") ||
+                   error.Contains("no such container") ||
+                   error.Contains("has disappeared");
+        }
+
+        private CombinedContainerRefreshResult ReadCombinedRemoteContainerDetails(
+            string contextName,
+            List<List<string>> batches,
+            HashSet<string> allowedIds,
+            Dictionary<string, DockerContainerInfo> summaryById,
+            Dictionary<string, DockerContainerStatsInfo> cachedStats,
+            string cachedHostCpu,
+            bool reuseLightweightSnapshot,
+            CancellationToken cancellationToken)
+        {
+            var identity = contextName.Substring(SshContextPrefix.Length).Trim();
+            var markerRoot = "__WPFAPP1_REFRESH_" + Guid.NewGuid().ToString("N") + "_";
+            RemoteDockerRoute route;
+            DockerCommandExecutionResult probeFailure;
+            if (!TryEnsureRemoteDockerRoute(identity, cancellationToken, false, out route, out probeFailure))
+            {
+                return CombinedContainerRefreshResult.Failed(probeFailure, cachedStats, cachedHostCpu);
+            }
+
+            string user;
+            string host;
+            string password;
+            if (!TryResolveSshTarget(identity, out user, out host, out password))
+            {
+                return CombinedContainerRefreshResult.Failed(
+                    DockerCommandExecutionResult.NotStartedWithError("Unable to resolve SSH target."), cachedStats, cachedHostCpu);
+            }
+
+            var script = BuildCombinedContainerRefreshScript(route, password, batches, markerRoot, !reuseLightweightSnapshot);
+            var queryWatch = Stopwatch.StartNew();
+            var execution = ExecuteRemoteReadOnlyScript(user, host, password, script, cancellationToken);
+            if ((execution.FailureKind == DockerCommandFailureKind.CommandNotFound ||
+                 execution.FailureKind == DockerCommandFailureKind.DockerPermission) &&
+                !execution.Cancelled)
+            {
+                lock (_remoteDockerRouteLock)
+                {
+                    _remoteDockerRoutes.Remove(NormalizeSshIdentity(identity));
+                }
+                if (TryEnsureRemoteDockerRoute(identity, cancellationToken, true, out route, out probeFailure))
+                {
+                    script = BuildCombinedContainerRefreshScript(route, password, batches, markerRoot, !reuseLightweightSnapshot);
+                    execution = ExecuteRemoteReadOnlyScript(user, host, password, script, cancellationToken);
+                }
+                else
+                {
+                    execution = probeFailure;
+                }
+            }
+            queryWatch.Stop();
+            RecordContainerRefreshTiming("container-combined-query", contextName, "stats/info/inspect", queryWatch.ElapsedMilliseconds, execution.Succeeded);
+            if (execution.Cancelled)
+            {
+                return CombinedContainerRefreshResult.Failed(execution, cachedStats, cachedHostCpu);
+            }
+
+            var parseWatch = Stopwatch.StartNew();
+            var stats = cachedStats ?? new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
+            var hostCpu = cachedHostCpu;
+            if (!reuseLightweightSnapshot)
+            {
+                string statsSection;
+                if (TryExtractMarkedSection(execution.StandardOutput, markerRoot + "STATS_BEGIN", markerRoot + "STATS_END", out statsSection))
+                {
+                    stats = ParseDockerContainerStatsOutput(statsSection);
+                }
+
+                string infoSection;
+                if (TryExtractMarkedSection(execution.StandardOutput, markerRoot + "INFO_BEGIN", markerRoot + "INFO_END", out infoSection))
+                {
+                    hostCpu = ParseHostCpuLimitText(infoSection);
+                }
+            }
+
+            var detailBatches = new List<ContainerDetailBatchResult>();
+            for (var i = 0; i < batches.Count; i++)
+            {
+                string inspectSection;
+                var parsed = new List<ContainerDetailResult>();
+                if (TryExtractMarkedSection(
+                    execution.StandardOutput,
+                    markerRoot + "INSPECT_" + i.ToString(CultureInfo.InvariantCulture) + "_BEGIN",
+                    markerRoot + "INSPECT_" + i.ToString(CultureInfo.InvariantCulture) + "_END",
+                    out inspectSection))
+                {
+                    parsed = ParseContainerInspectBatch(
+                        inspectSection, allowedIds, new HashSet<string>(StringComparer.OrdinalIgnoreCase), summaryById, hostCpu);
+                }
+                detailBatches.Add(new ContainerDetailBatchResult(execution, parsed));
+            }
+            parseWatch.Stop();
+            RecordContainerRefreshTiming("container-combined-parse", contextName, "batches=" + batches.Count, parseWatch.ElapsedMilliseconds, true);
+            return new CombinedContainerRefreshResult(execution, stats, hostCpu, detailBatches);
+        }
+
+        private static string BuildCombinedContainerRefreshScript(
+            RemoteDockerRoute route,
+            string password,
+            List<List<string>> batches,
+            string markerRoot,
+            bool includeStatsAndInfo)
+        {
+            var dockerFunction = route.UseSudo
+                ? string.Format("docker_cmd() {{ printf '%s\\n' '{0}' | sudo -S -p '' {1} \"$@\"; }}; ", EscapeShellSingleQuoted(password), route.ExecutablePath)
+                : string.Format("docker_cmd() {{ {0} \"$@\"; }}; ", route.ExecutablePath);
+            var script = "set +e; export LC_ALL=C; " + dockerFunction +
+                         "docker_cmd version --format '{{.Server.Version}}' >/dev/null || exit $?; ";
+            if (includeStatsAndInfo)
+            {
+                script += "printf '%s\\n' '" + markerRoot + "STATS_BEGIN'; " +
+                          "docker_cmd stats --no-stream --no-trunc --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.BlockIO}}'; " +
+                          "printf '%s\\n' '" + markerRoot + "STATS_END' '" + markerRoot + "INFO_BEGIN'; " +
+                          "docker_cmd info --format '{{.NCPU}}'; " +
+                          "printf '%s\\n' '" + markerRoot + "INFO_END'; ";
+            }
+
+            const string inspectFormat = "{{.Id}}|{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.HostConfig.CpuQuota}}|{{.HostConfig.CpuPeriod}}|{{.HostConfig.CpusetCpus}}|{{json .HostConfig.PortBindings}}|{{json .Config.ExposedPorts}}";
+            for (var i = 0; i < batches.Count; i++)
+            {
+                var number = i.ToString(CultureInfo.InvariantCulture);
+                script += "printf '%s\\n' '" + markerRoot + "INSPECT_" + number + "_BEGIN'; " +
+                          "docker_cmd container inspect --format '" + inspectFormat + "' " + string.Join(" ", batches[i]) + "; " +
+                          "printf '%s\\n' '" + markerRoot + "INSPECT_" + number + "_END'; ";
+            }
+            return script + "printf '%s\\n' '" + markerRoot + "COMPLETE'";
+        }
+
+        private DockerCommandExecutionResult ExecuteRemoteReadOnlyScript(
+            string user,
+            string host,
+            string password,
+            string script,
+            CancellationToken cancellationToken)
+        {
+            string stdOut;
+            string stdErr;
+            var ok = ExecuteSshRemoteCommand(
+                user, host, password, script, 60000, out stdOut, out stdErr,
+                "ssh-container-combined", cancellationToken);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return DockerCommandExecutionResult.CancelledResult(stdOut, stdErr);
+            }
+            return CreateDockerCommandResult(true, ok ? 0 : 1, stdOut, stdErr, false, false);
+        }
+
+        private async void StartContainerSizeLazyRefresh(
+            string contextName,
+            string deviceName,
+            List<string> containerIds,
+            int version,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(750, cancellationToken);
+                var batches = BuildContainerIdBatches(containerIds, 40, 6000);
+                for (var i = 0; i < batches.Count; i++)
+                {
+                    if (!IsContainerRefreshCurrent(contextName, version, cancellationToken))
+                    {
+                        return;
+                    }
+
+                    var ids = batches[i];
+                    var command = "container inspect --size --format \"{{.Id}}|{{.SizeRw}}\" " + string.Join(" ", ids);
+                    var stopwatch = Stopwatch.StartNew();
+                    var execution = await Task.Run(() => ExecuteDockerCommandDetailed(command, contextName, 45000, cancellationToken));
+                    stopwatch.Stop();
+                    RecordContainerRefreshTiming("container-size-lazy", contextName, "ids=" + ids.Count, stopwatch.ElapsedMilliseconds, execution.Succeeded);
+                    if (execution.Cancelled)
+                    {
+                        return;
+                    }
+
+                    var sizes = ParseContainerSizes(execution.StandardOutput, new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase));
+                    if (sizes.Count > 0)
+                    {
+                        await Dispatcher.InvokeAsync(() => ApplyContainerSizes(
+                            contextName, deviceName, sizes, version, cancellationToken));
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Container size lazy refresh failed: " + ex.Message);
+            }
+        }
+
+        private static Dictionary<string, string> ParseContainerSizes(string output, HashSet<string> allowedIds)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var parts = lines[i].Split('|');
+                long bytes;
+                var id = parts.Length > 0 ? parts[0].Trim() : string.Empty;
+                if (parts.Length == 2 && allowedIds.Contains(id) && !result.ContainsKey(id) &&
+                    long.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out bytes) && bytes >= 0)
+                {
+                    result[id] = FormatBytes(bytes);
+                }
+            }
+            return result;
+        }
+
+        private void ApplyContainerSizes(
+            string contextName,
+            string deviceName,
+            Dictionary<string, string> sizes,
+            int version,
+            CancellationToken cancellationToken)
+        {
+            if (!IsContainerRefreshCurrent(contextName, version, cancellationToken))
+            {
+                return;
+            }
+
+            var indexes = _containerRows
+                .Select((row, index) => new { Row = row, Index = index })
+                .Where(item => string.Equals(item.Row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(item => item.Row.FullId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.OrdinalIgnoreCase);
+            var changed = false;
+            foreach (var pair in sizes)
+            {
+                _containerSizeCache[contextName + "|" + pair.Key] = pair.Value;
+                int index;
+                if (!indexes.TryGetValue(pair.Key, out index))
+                {
+                    continue;
+                }
+                var current = _containerRows[index];
+                if (string.Equals(current.Size, pair.Value, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                _containerRows[index] = new ContainerComposeRow(
+                    current.DeviceName, current.Id, current.Name, current.ChineseName, current.Image, current.Status,
+                    current.Ports, current.CpuCores, current.CpuPercent, current.MemoryUsage, current.MemoryPercent,
+                    current.DiskReadWrite, current.Detail, current.FullId, pair.Value);
+                changed = true;
+            }
+            if (changed && string.Equals(GetSelectedContainerDeviceName(), deviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                BindContainerRows(deviceName);
+            }
+        }
+
+        private DockerCommandExecutionResult ExecuteDockerCommandDetailed(
+            string commandArgs,
+            string contextName,
+            int timeoutMs,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (!string.IsNullOrWhiteSpace(contextName) && contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return ExecuteDockerCommandDetailedOverSsh(
+                    contextName.Substring(SshContextPrefix.Length).Trim(),
+                    commandArgs,
+                    timeoutMs,
+                    cancellationToken);
+            }
+
+            string fallbackSshIdentity;
+            var hasSshFallback = TryResolveSshIdentityForContext(contextName, out fallbackSshIdentity) &&
+                                 _sshPasswordByTarget.ContainsKey(fallbackSshIdentity);
             var args = string.IsNullOrWhiteSpace(contextName)
                 ? commandArgs
                 : string.Format("--context \"{0}\" {1}", contextName, commandArgs);
@@ -698,34 +1223,39 @@ namespace WpfApp1
                 {
                     if (process == null)
                     {
-                        return DockerCommandExecutionResult.NotStartedWithError("无法启动 docker 进程。");
+                        return DockerCommandExecutionResult.NotStartedWithError("Unable to start docker process.");
                     }
 
                     var stdOutTask = process.StandardOutput.ReadToEndAsync();
                     var stdErrTask = process.StandardError.ReadToEndAsync();
-                    if (!process.WaitForExit(timeoutMs))
+                    using (cancellationToken.Register(() =>
                     {
-                        try { process.Kill(); } catch { }
-                        string timedOutStdOut;
-                        string timedOutStdErr;
-                        CollectProcessStreams(stdOutTask, stdErrTask, 3000, out timedOutStdOut, out timedOutStdErr);
-                        if (!string.IsNullOrWhiteSpace(fallbackSshIdentity) && string.IsNullOrWhiteSpace(timedOutStdOut))
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                    }))
+                    {
+                        if (!process.WaitForExit(timeoutMs))
                         {
-                            return ExecuteDockerCommandDetailedOverSsh(fallbackSshIdentity, commandArgs, timeoutMs);
+                            try { process.Kill(); } catch { }
+                            string timeoutOutput;
+                            string timeoutError;
+                            CollectProcessStreams(stdOutTask, stdErrTask, 3000, out timeoutOutput, out timeoutError);
+                            return new DockerCommandExecutionResult(
+                                true, -1, timeoutOutput, timeoutError, true, false, DockerCommandFailureKind.Timeout);
                         }
-
-                        return new DockerCommandExecutionResult(true, -1, timedOutStdOut, timedOutStdErr, true);
                     }
 
                     string stdOut;
                     string stdErr;
                     CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
-                    var localResult = new DockerCommandExecutionResult(true, process.ExitCode, stdOut, stdErr, false);
-                    if (!localResult.Succeeded &&
-                        !string.IsNullOrWhiteSpace(fallbackSshIdentity) &&
-                        string.IsNullOrWhiteSpace(localResult.StandardOutput))
+                    if (cancellationToken.IsCancellationRequested)
                     {
-                        return ExecuteDockerCommandDetailedOverSsh(fallbackSshIdentity, commandArgs, timeoutMs);
+                        return DockerCommandExecutionResult.CancelledResult(stdOut, stdErr);
+                    }
+
+                    var localResult = CreateDockerCommandResult(true, process.ExitCode, stdOut, stdErr, false, false);
+                    if (!localResult.Succeeded && hasSshFallback && string.IsNullOrWhiteSpace(stdOut))
+                    {
+                        return ExecuteDockerCommandDetailedOverSsh(fallbackSshIdentity, commandArgs, timeoutMs, cancellationToken);
                     }
 
                     return localResult;
@@ -733,88 +1263,221 @@ namespace WpfApp1
             }
             catch (Exception ex)
             {
-                if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
-                {
-                    return ExecuteDockerCommandDetailedOverSsh(fallbackSshIdentity, commandArgs, timeoutMs);
-                }
-
-                return DockerCommandExecutionResult.NotStartedWithError(ex.Message);
+                return hasSshFallback
+                    ? ExecuteDockerCommandDetailedOverSsh(fallbackSshIdentity, commandArgs, timeoutMs, cancellationToken)
+                    : DockerCommandExecutionResult.NotStartedWithError(ex.Message);
             }
         }
 
-        private DockerCommandExecutionResult ExecuteDockerCommandDetailedOverSsh(string targetIdentity, string commandArgs, int timeoutMs)
+        private DockerCommandExecutionResult ExecuteDockerCommandDetailedOverSsh(
+            string targetIdentity,
+            string commandArgs,
+            int timeoutMs,
+            CancellationToken cancellationToken = default(CancellationToken))
+        {
+            RemoteDockerRoute route;
+            DockerCommandExecutionResult probeFailure;
+            if (!TryEnsureRemoteDockerRoute(targetIdentity, cancellationToken, false, out route, out probeFailure))
+            {
+                return probeFailure;
+            }
+
+            var result = ExecuteDockerCommandOnRemoteRoute(targetIdentity, route, commandArgs, timeoutMs, cancellationToken);
+            if (result.Cancelled || result.TimedOut ||
+                (result.FailureKind != DockerCommandFailureKind.CommandNotFound &&
+                 result.FailureKind != DockerCommandFailureKind.DockerPermission))
+            {
+                return result;
+            }
+
+            lock (_remoteDockerRouteLock)
+            {
+                _remoteDockerRoutes.Remove(NormalizeSshIdentity(targetIdentity));
+            }
+
+            if (!TryEnsureRemoteDockerRoute(targetIdentity, cancellationToken, true, out route, out probeFailure))
+            {
+                return probeFailure;
+            }
+
+            return ExecuteDockerCommandOnRemoteRoute(targetIdentity, route, commandArgs, timeoutMs, cancellationToken);
+        }
+
+        private bool TryEnsureRemoteDockerRoute(
+            string targetIdentity,
+            CancellationToken cancellationToken,
+            bool forceProbe,
+            out RemoteDockerRoute route,
+            out DockerCommandExecutionResult failure)
+        {
+            route = null;
+            failure = DockerCommandExecutionResult.NotStarted;
+            var normalizedIdentity = NormalizeSshIdentity(targetIdentity);
+            if (!forceProbe)
+            {
+                lock (_remoteDockerRouteLock)
+                {
+                    if (_remoteDockerRoutes.TryGetValue(normalizedIdentity, out route))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            string user;
+            string host;
+            string password;
+            if (!TryResolveSshTarget(normalizedIdentity, out user, out host, out password))
+            {
+                failure = DockerCommandExecutionResult.NotStartedWithError("Unable to resolve SSH target.");
+                return false;
+            }
+
+            const string marker = "__WPFAPP1_DOCKER_ROUTE__";
+            var escapedPassword = EscapeShellSingleQuoted(password);
+            var probeScript =
+                "set +e; export LC_ALL=C; " +
+                "for p in docker /usr/bin/docker /usr/local/bin/docker; do " +
+                "command -v \"$p\" >/dev/null 2>&1 || test -x \"$p\" || continue; " +
+                "\"$p\" version --format '{{.Server.Version}}' >/dev/null 2>&1 && { printf '%s|%s|0\\n' '" + marker + "' \"$p\"; exit 0; }; " +
+                "done; " +
+                "for p in docker /usr/bin/docker /usr/local/bin/docker; do " +
+                "command -v \"$p\" >/dev/null 2>&1 || test -x \"$p\" || continue; " +
+                "printf '%s\\n' '" + escapedPassword + "' | sudo -S -p '' \"$p\" version --format '{{.Server.Version}}' >/dev/null 2>&1 && { printf '%s|%s|1\\n' '" + marker + "' \"$p\"; exit 0; }; " +
+                "done; printf '%s\\n' '__WPFAPP1_DOCKER_ROUTE_FAILED__' >&2; exit 127";
+
+            string stdOut;
+            string stdErr;
+            var ok = ExecuteSshRemoteCommand(
+                user, host, password, probeScript, 12000, out stdOut, out stdErr,
+                "ssh-docker-route-probe", cancellationToken);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                failure = DockerCommandExecutionResult.CancelledResult(stdOut, stdErr);
+                return false;
+            }
+
+            var routeLine = (stdOut ?? string.Empty)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => line.StartsWith(marker + "|", StringComparison.Ordinal));
+            var parts = (routeLine ?? string.Empty).Split('|');
+            if (!ok || parts.Length != 3 || string.IsNullOrWhiteSpace(parts[1]))
+            {
+                failure = CreateDockerCommandResult(true, ok ? 0 : 1, stdOut, stdErr, false, false);
+                return false;
+            }
+
+            route = new RemoteDockerRoute(parts[1].Trim(), string.Equals(parts[2].Trim(), "1", StringComparison.Ordinal));
+            lock (_remoteDockerRouteLock)
+            {
+                _remoteDockerRoutes[normalizedIdentity] = route;
+            }
+            return true;
+        }
+
+        private DockerCommandExecutionResult ExecuteDockerCommandOnRemoteRoute(
+            string targetIdentity,
+            RemoteDockerRoute route,
+            string commandArgs,
+            int timeoutMs,
+            CancellationToken cancellationToken)
         {
             string user;
             string host;
             string password;
             if (!TryResolveSshTarget(targetIdentity, out user, out host, out password))
             {
-                return DockerCommandExecutionResult.NotStartedWithError("无法解析 SSH 目标。");
+                return DockerCommandExecutionResult.NotStartedWithError("Unable to resolve SSH target.");
             }
 
-            var effectiveTimeoutMs = Math.Max(timeoutMs, 15000);
-            var escapedPassword = EscapeShellSingleQuoted(password);
-            var candidates = new List<string>
+            var remoteCommand = BuildRemoteDockerCommand(route, password, commandArgs);
+            string stdOut;
+            string stdErr;
+            var ok = ExecuteSshRemoteCommand(
+                user, host, password, remoteCommand, Math.Max(timeoutMs, 15000), out stdOut, out stdErr,
+                "ssh-docker-cached-route", cancellationToken);
+            if (cancellationToken.IsCancellationRequested)
             {
-                "docker " + commandArgs,
-                "/usr/bin/docker " + commandArgs,
-                "/usr/local/bin/docker " + commandArgs,
-                string.Format("printf '%s\\n' '{0}' | sudo -S -p '' docker {1}", escapedPassword, commandArgs),
-                string.Format("printf '%s\\n' '{0}' | sudo -S -p '' /usr/bin/docker {1}", escapedPassword, commandArgs),
-                string.Format("printf '%s\\n' '{0}' | sudo -S -p '' /usr/local/bin/docker {1}", escapedPassword, commandArgs)
-            };
-            var identity = BuildSshTargetIdentity(user, host);
-            var candidateIndexes = new List<int>();
-            int preferredIndex;
-            var hasPreferred = _preferredSshDockerCandidateIndex.TryGetValue(identity, out preferredIndex) &&
-                               preferredIndex >= 0 &&
-                               preferredIndex < candidates.Count;
-            if (hasPreferred)
-            {
-                candidateIndexes.Add(preferredIndex);
+                return DockerCommandExecutionResult.CancelledResult(stdOut, stdErr);
             }
 
-            for (var i = 0; i < candidates.Count; i++)
+            var result = CreateDockerCommandResult(true, ok ? 0 : 1, stdOut, stdErr, false, false);
+            if (result.Succeeded)
             {
-                if (!hasPreferred || i != preferredIndex)
-                {
-                    candidateIndexes.Add(i);
-                }
+                _lastSshErrorByTarget.Remove(NormalizeSshIdentity(targetIdentity));
+            }
+            else
+            {
+                _lastSshErrorByTarget[NormalizeSshIdentity(targetIdentity)] =
+                    string.IsNullOrWhiteSpace(stdErr) ? stdOut : stdErr;
+            }
+            return result;
+        }
+
+        private static string BuildRemoteDockerCommand(RemoteDockerRoute route, string password, string commandArgs)
+        {
+            if (route.UseSudo)
+            {
+                return string.Format(
+                    "printf '%s\\n' '{0}' | sudo -S -p '' {1} {2}",
+                    EscapeShellSingleQuoted(password), route.ExecutablePath, commandArgs);
             }
 
-            var lastResult = DockerCommandExecutionResult.NotStartedWithError("远端 Docker 命令执行失败。");
-            for (var i = 0; i < candidateIndexes.Count; i++)
-            {
-                var candidateIndex = candidateIndexes[i];
-                string stdOut;
-                string stdErr;
-                var ok = ExecuteSshRemoteCommand(
-                    user,
-                    host,
-                    password,
-                    candidates[candidateIndex],
-                    effectiveTimeoutMs,
-                    out stdOut,
-                    out stdErr,
-                    "ssh-docker-detail-batch[" + candidateIndex.ToString(CultureInfo.InvariantCulture) + "]");
-                lastResult = new DockerCommandExecutionResult(true, ok ? 0 : 1, stdOut, stdErr, false);
-                if (ok)
-                {
-                    _lastSshErrorByTarget.Remove(identity);
-                    _preferredSshDockerCandidateIndex[identity] = candidateIndex;
-                    return lastResult;
-                }
+            return route.ExecutablePath + " " + commandArgs;
+        }
 
-                if (!string.IsNullOrWhiteSpace(stdOut))
-                {
-                    return lastResult;
-                }
+        private static string NormalizeSshIdentity(string targetIdentity)
+        {
+            return (targetIdentity ?? string.Empty).Trim();
+        }
+
+        private static DockerCommandExecutionResult CreateDockerCommandResult(
+            bool started,
+            int exitCode,
+            string stdOut,
+            string stdErr,
+            bool timedOut,
+            bool cancelled)
+        {
+            var merged = ((stdErr ?? string.Empty) + "\n" + (stdOut ?? string.Empty)).ToLowerInvariant();
+            var kind = DockerCommandFailureKind.Other;
+            if (cancelled)
+            {
+                kind = DockerCommandFailureKind.Cancelled;
+            }
+            else if (timedOut || merged.Contains("timed out") || merged.Contains("timeout") || merged.Contains("超时"))
+            {
+                kind = DockerCommandFailureKind.Timeout;
+            }
+            else if (merged.Contains("authentication failed") ||
+                     merged.Contains("permission denied (publickey,password") ||
+                     merged.Contains("permission denied, please try again") ||
+                     merged.Contains("access denied"))
+            {
+                kind = DockerCommandFailureKind.Authentication;
+            }
+            else if (merged.Contains("permission denied") || merged.Contains("got permission denied") || merged.Contains("sudo:"))
+            {
+                kind = DockerCommandFailureKind.DockerPermission;
+            }
+            else if (merged.Contains("not found") || merged.Contains("no such file or directory") || exitCode == 127)
+            {
+                kind = DockerCommandFailureKind.CommandNotFound;
+            }
+            else if (merged.Contains("no route to host") || merged.Contains("connection refused") || merged.Contains("network is unreachable") || merged.Contains("could not resolve hostname"))
+            {
+                kind = DockerCommandFailureKind.Offline;
+            }
+            else if (!string.IsNullOrWhiteSpace(stdOut) && exitCode != 0)
+            {
+                kind = DockerCommandFailureKind.PartialOutput;
+            }
+            else if (exitCode == 0)
+            {
+                kind = DockerCommandFailureKind.None;
             }
 
-            _lastSshErrorByTarget[identity] = string.IsNullOrWhiteSpace(lastResult.StandardError)
-                ? "远端命令执行失败（无 stdout/stderr 输出）。"
-                : lastResult.StandardError.Trim();
-            return lastResult;
+            return new DockerCommandExecutionResult(started, exitCode, stdOut, stdErr, timedOut, cancelled, kind);
         }
 
         private async Task<bool> ConfirmContainerOperationAsync(string contextName, IList<ContainerComposeRow> targetRows)
@@ -1013,18 +1676,80 @@ namespace WpfApp1
             public List<ContainerDetailResult> Details { get; }
         }
 
+        private sealed class CombinedContainerRefreshResult
+        {
+            public CombinedContainerRefreshResult(
+                DockerCommandExecutionResult execution,
+                Dictionary<string, DockerContainerStatsInfo> statsById,
+                string hostCpuLimitText,
+                List<ContainerDetailBatchResult> batches)
+            {
+                Execution = execution ?? DockerCommandExecutionResult.NotStarted;
+                StatsById = statsById ?? new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
+                HostCpuLimitText = string.IsNullOrWhiteSpace(hostCpuLimitText) ? "-" : hostCpuLimitText;
+                Batches = batches ?? new List<ContainerDetailBatchResult>();
+            }
+
+            public DockerCommandExecutionResult Execution { get; }
+            public Dictionary<string, DockerContainerStatsInfo> StatsById { get; }
+            public string HostCpuLimitText { get; }
+            public List<ContainerDetailBatchResult> Batches { get; }
+
+            public static CombinedContainerRefreshResult Failed(
+                DockerCommandExecutionResult execution,
+                Dictionary<string, DockerContainerStatsInfo> statsById,
+                string hostCpuLimitText)
+            {
+                return new CombinedContainerRefreshResult(execution, statsById, hostCpuLimitText, null);
+            }
+        }
+
+        private sealed class LightweightDetailSnapshot
+        {
+            public LightweightDetailSnapshot(
+                Dictionary<string, DockerContainerStatsInfo> statsById,
+                string hostCpuLimitText,
+                DateTime capturedUtc)
+            {
+                StatsById = statsById ?? new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
+                HostCpuLimitText = string.IsNullOrWhiteSpace(hostCpuLimitText) ? "-" : hostCpuLimitText;
+                CapturedUtc = capturedUtc;
+            }
+
+            public Dictionary<string, DockerContainerStatsInfo> StatsById { get; }
+            public string HostCpuLimitText { get; }
+            public DateTime CapturedUtc { get; }
+        }
+
         private sealed class DockerCommandExecutionResult
         {
             public static readonly DockerCommandExecutionResult NotStarted =
-                new DockerCommandExecutionResult(false, -1, string.Empty, string.Empty, false);
+                new DockerCommandExecutionResult(false, -1, string.Empty, string.Empty, false, false, DockerCommandFailureKind.Other);
+            public static readonly DockerCommandExecutionResult SuccessfulEmpty =
+                new DockerCommandExecutionResult(true, 0, string.Empty, string.Empty, false, false, DockerCommandFailureKind.None);
 
             public DockerCommandExecutionResult(bool started, int exitCode, string standardOutput, string standardError, bool timedOut)
+                : this(started, exitCode, standardOutput, standardError, timedOut, false,
+                    timedOut ? DockerCommandFailureKind.Timeout : (exitCode == 0 ? DockerCommandFailureKind.None : DockerCommandFailureKind.Other))
+            {
+            }
+
+            public DockerCommandExecutionResult(
+                bool started,
+                int exitCode,
+                string standardOutput,
+                string standardError,
+                bool timedOut,
+                bool cancelled,
+                DockerCommandFailureKind failureKind)
             {
                 Started = started;
                 ExitCode = exitCode;
                 StandardOutput = standardOutput ?? string.Empty;
                 StandardError = standardError ?? string.Empty;
                 TimedOut = timedOut;
+                Cancelled = cancelled;
+                FailureKind = failureKind;
             }
 
             public bool Started { get; }
@@ -1032,12 +1757,46 @@ namespace WpfApp1
             public string StandardOutput { get; }
             public string StandardError { get; }
             public bool TimedOut { get; }
-            public bool Succeeded => Started && !TimedOut && ExitCode == 0;
+            public bool Cancelled { get; }
+            public DockerCommandFailureKind FailureKind { get; }
+            public bool Succeeded => Started && !TimedOut && !Cancelled && ExitCode == 0;
 
             public static DockerCommandExecutionResult NotStartedWithError(string error)
             {
-                return new DockerCommandExecutionResult(false, -1, string.Empty, error, false);
+                return new DockerCommandExecutionResult(false, -1, string.Empty, error, false, false, DockerCommandFailureKind.Other);
             }
+
+            public static DockerCommandExecutionResult CancelledResult(string standardOutput, string standardError)
+            {
+                return new DockerCommandExecutionResult(
+                    true, -1, standardOutput, standardError, false, true, DockerCommandFailureKind.Cancelled);
+            }
+        }
+
+        private sealed class RemoteDockerRoute
+        {
+            public RemoteDockerRoute(string executablePath, bool useSudo)
+            {
+                ExecutablePath = executablePath ?? string.Empty;
+                UseSudo = useSudo;
+            }
+
+            public string ExecutablePath { get; }
+            public bool UseSudo { get; }
+        }
+
+        private enum DockerCommandFailureKind
+        {
+            None,
+            Cancelled,
+            Timeout,
+            Offline,
+            Authentication,
+            CommandNotFound,
+            DockerPermission,
+            PartialOutput,
+            PermanentFormat,
+            Other
         }
     }
 }

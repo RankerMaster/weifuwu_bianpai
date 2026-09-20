@@ -11,6 +11,7 @@ using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Text;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -943,6 +944,10 @@ namespace WpfApp1
                         _readTargetIps.Remove(targetIdentity);
                         _sshPasswordByTarget.Remove(targetIdentity);
                         _preferredSshDockerCandidateIndex.Remove(targetIdentity);
+                        lock (_remoteDockerRouteLock)
+                        {
+                            _remoteDockerRoutes.Remove(targetIdentity);
+                        }
                     }
                     else if (hadPreviousTargetPassword)
                     {
@@ -3518,56 +3523,61 @@ namespace WpfApp1
                 return false;
             }
 
-            var dockerExecutables = new[] { "docker", "/usr/bin/docker", "/usr/local/bin/docker" };
-            var candidates = new List<Tuple<string, bool>>();
-            for (var i = 0; i < dockerExecutables.Length; i++)
-            {
-                candidates.Add(Tuple.Create(dockerExecutables[i], false));
-            }
-            for (var i = 0; i < dockerExecutables.Length; i++)
-            {
-                candidates.Add(Tuple.Create(dockerExecutables[i], true));
-            }
-
             var targetIdentity = BuildSshTargetIdentity(user, host);
-            var candidateIndexes = BuildSshCandidateOrder(targetIdentity, candidates.Count);
-            var bestError = string.Empty;
-            for (var orderIndex = 0; orderIndex < candidateIndexes.Count; orderIndex++)
+            RemoteDockerRoute route;
+            DockerCommandExecutionResult probeFailure;
+            if (!TryEnsureRemoteDockerRoute(
+                targetIdentity,
+                CancellationToken.None,
+                false,
+                out route,
+                out probeFailure))
             {
-                var candidateIndex = candidateIndexes[orderIndex];
-                var candidate = candidates[candidateIndex];
-                var script = BuildLightweightDockerBatchScript(candidate.Item1, candidate.Item2, password);
-                string stdOut;
-                string stdErr;
-                var ok = ExecuteSshRemoteCommand(
-                    user,
-                    host,
-                    password,
-                    script,
-                    30000,
-                    out stdOut,
-                    out stdErr,
-                    "ssh-batch-candidate[" + candidateIndex.ToString(CultureInfo.InvariantCulture) + "]");
-
-                LightweightDockerData parsed;
-                var parseError = string.Empty;
-                if (ok && TryParseLightweightDockerBatchOutput(contextName, stdOut, out parsed, out parseError))
-                {
-                    _preferredSshDockerCandidateIndex[targetIdentity] = candidateIndex;
-                    _lastSshErrorByTarget.Remove(targetIdentity);
-                    data = parsed;
-                    return true;
-                }
-
-                bestError = !string.IsNullOrWhiteSpace(parseError)
-                    ? parseError
-                    : (!string.IsNullOrWhiteSpace(stdErr) ? stdErr.Trim() : (stdOut ?? string.Empty).Trim());
+                _lastSshErrorByTarget[targetIdentity] = string.IsNullOrWhiteSpace(probeFailure.StandardError)
+                    ? probeFailure.StandardOutput
+                    : probeFailure.StandardError;
+                return false;
             }
 
+            var script = BuildLightweightDockerBatchScript(route.ExecutablePath, route.UseSudo, password);
+            var execution = ExecuteRemoteReadOnlyScript(user, host, password, script, CancellationToken.None);
+            if (execution.FailureKind == DockerCommandFailureKind.CommandNotFound ||
+                execution.FailureKind == DockerCommandFailureKind.DockerPermission)
+            {
+                lock (_remoteDockerRouteLock)
+                {
+                    _remoteDockerRoutes.Remove(targetIdentity);
+                }
+                if (TryEnsureRemoteDockerRoute(targetIdentity, CancellationToken.None, true, out route, out probeFailure))
+                {
+                    script = BuildLightweightDockerBatchScript(route.ExecutablePath, route.UseSudo, password);
+                    execution = ExecuteRemoteReadOnlyScript(user, host, password, script, CancellationToken.None);
+                }
+                else
+                {
+                    execution = probeFailure;
+                }
+            }
+            var stdOut = execution.StandardOutput;
+            var stdErr = execution.StandardError;
+            var ok = execution.Succeeded;
+            LightweightDockerData parsed;
+            var parseError = string.Empty;
+            if (ok && TryParseLightweightDockerBatchOutput(contextName, stdOut, out parsed, out parseError))
+            {
+                _lastSshErrorByTarget.Remove(targetIdentity);
+                data = parsed;
+                return true;
+            }
+
+            var bestError = !string.IsNullOrWhiteSpace(parseError)
+                ? parseError
+                : (!string.IsNullOrWhiteSpace(stdErr) ? stdErr.Trim() : (stdOut ?? string.Empty).Trim());
             if (string.IsNullOrWhiteSpace(bestError))
             {
                 bestError = "轻量批量读取失败（无可用输出）。";
             }
+
             _lastSshErrorByTarget[targetIdentity] = bestError;
             Debug.WriteLine("Lightweight SSH batch failed: " + targetIdentity + " | " + bestError);
             return false;
@@ -3607,7 +3617,7 @@ namespace WpfApp1
                    "printf '%s\\n' '" + LightweightImagesBeginMarker + "'; " +
                    "docker_cmd image ls --no-trunc --format '{{.ID}}|{{.Repository}}|{{.Tag}}|{{.CreatedAt}}|{{.Size}}'; " +
                    "printf '%s\\n' '" + LightweightImagesEndMarker + "' '" + LightweightStatsBeginMarker + "'; " +
-                   "docker_cmd stats --no-stream --no-trunc --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}'; " +
+                   "docker_cmd stats --no-stream --no-trunc --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.BlockIO}}'; " +
                    "printf '%s\\n' '" + LightweightStatsEndMarker + "' '" + LightweightInfoBeginMarker + "'; " +
                    "info_line=$(docker_cmd info --format '{{.NCPU}}|{{.MemTotal}}|{{.DockerRootDir}}'); " +
                    "printf '%s\\n' \"$info_line\"; " +
@@ -3669,7 +3679,7 @@ namespace WpfApp1
             for (var i = 0; i < statsLines.Length; i++)
             {
                 var parts = statsLines[i].Split('|');
-                if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[0]))
+                if (parts.Length < 5 || string.IsNullOrWhiteSpace(parts[0]))
                 {
                     error = "轻量批量读取返回的容器汇总记录格式无效。";
                     return false;
@@ -3683,6 +3693,13 @@ namespace WpfApp1
             _hostMemoryLimitMbByContext[key] = (int)Math.Max(
                 1,
                 Math.Min(int.MaxValue, hostMemoryTotalBytes / (1024L * 1024L)));
+            lock (_lightweightDetailCacheLock)
+            {
+                _lightweightDetailCache[key] = new LightweightDetailSnapshot(
+                    ParseDockerContainerStatsOutput(statsSection),
+                    hostCpuCores.ToString("0.##", CultureInfo.InvariantCulture),
+                    DateTime.UtcNow);
+            }
 
             data = new LightweightDockerData(
                 ParseDockerImages(imagesSection),
@@ -3724,8 +3741,13 @@ namespace WpfApp1
                 return new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
             }
 
+            return ParseDockerContainerStatsOutput(output);
+        }
+
+        private static Dictionary<string, DockerContainerStatsInfo> ParseDockerContainerStatsOutput(string output)
+        {
             var result = new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
-            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
                 var parts = lines[i].Split('|');
@@ -5161,7 +5183,8 @@ namespace WpfApp1
             int timeoutMs,
             out string stdOut,
             out string stdErr,
-            string timingRoute = "ssh")
+            string timingRoute = "ssh",
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             stdOut = string.Empty;
             stdErr = string.Empty;
@@ -5181,7 +5204,7 @@ namespace WpfApp1
             {
                 File.WriteAllText(askPassFile, "@echo off\r\necho " + sshPassword + "\r\n", new System.Text.UTF8Encoding(false));
                 var commonArgs = string.Format(
-                    "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
+                    "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
                     user,
                     host,
                     remoteCommand);
@@ -5211,7 +5234,8 @@ namespace WpfApp1
                             sshPassword,
                             timeoutMs,
                             out stdOut,
-                            out stdErr);
+                            out stdErr,
+                            cancellationToken);
                         timingStopwatch.Stop();
                         AppendReadTiming(timingRoute + "-stdin-fallback", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
                         return fallbackOk;
@@ -5219,31 +5243,52 @@ namespace WpfApp1
 
                     var stdOutTask = process.StandardOutput.ReadToEndAsync();
                     var stdErrTask = process.StandardError.ReadToEndAsync();
-                    if (!process.WaitForExit(timeoutMs))
+                    using (cancellationToken.Register(() =>
                     {
-                        try { process.Kill(); } catch { }
-                        Debug.WriteLine("SSH remote command timeout: " + user + "@" + host + " | " + timingCommand);
-                        stdErr = "SSH 执行超时（ASKPASS 模式）。";
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                    }))
+                    {
+                        if (!process.WaitForExit(timeoutMs))
+                        {
+                            try { process.Kill(); } catch { }
+                            Debug.WriteLine("SSH remote command timeout: " + user + "@" + host + " | " + timingCommand);
+                            stdErr = "SSH 执行超时（ASKPASS 模式）。";
+                            timingStopwatch.Stop();
+                            AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
+                            return false;
+                        }
+                    }
+
+                    CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        stdErr = "SSH 后台只读查询已取消。";
                         timingStopwatch.Stop();
                         AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
                         return false;
                     }
 
-                    CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
-
                     if (process.ExitCode != 0)
                     {
-                        // fallback to stdin password mode
-                        var fallbackOk = TryExecuteSshWithStdinPassword(
-                            sshExecutable,
-                            commonArgs,
-                            sshPassword,
-                            timeoutMs,
-                            out stdOut,
-                            out stdErr);
+                        if (ShouldRetrySshWithStdinPassword(stdOut, stdErr))
+                        {
+                            var fallbackOk = TryExecuteSshWithStdinPassword(
+                                sshExecutable,
+                                commonArgs,
+                                sshPassword,
+                                timeoutMs,
+                                out stdOut,
+                                out stdErr,
+                                cancellationToken);
+                            timingStopwatch.Stop();
+                            AppendReadTiming(timingRoute + "-askpass+stdin", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                            return fallbackOk;
+                        }
+
                         timingStopwatch.Stop();
-                        AppendReadTiming(timingRoute + "-askpass+stdin", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
-                        return fallbackOk;
+                        AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
+                        return false;
                     }
 
                     timingStopwatch.Stop();
@@ -5258,14 +5303,15 @@ namespace WpfApp1
                 var fallbackOk = TryExecuteSshWithStdinPassword(
                     sshExecutable,
                     string.Format(
-                        "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
+                        "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
                         user,
                         host,
                         remoteCommand),
                     sshPassword,
                     timeoutMs,
                     out stdOut,
-                    out stdErr);
+                    out stdErr,
+                    cancellationToken);
                 timingStopwatch.Stop();
                 AppendReadTiming(timingRoute + "-stdin-fallback", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
                 return fallbackOk;
@@ -5344,7 +5390,8 @@ namespace WpfApp1
             string sshPassword,
             int timeoutMs,
             out string stdOut,
-            out string stdErr)
+            out string stdErr,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             stdOut = string.Empty;
             stdErr = string.Empty;
@@ -5375,14 +5422,26 @@ namespace WpfApp1
 
                     var stdOutTask = process.StandardOutput.ReadToEndAsync();
                     var stdErrTask = process.StandardError.ReadToEndAsync();
-                    if (!process.WaitForExit(timeoutMs))
+                    using (cancellationToken.Register(() =>
                     {
-                        try { process.Kill(); } catch { }
-                        stdErr = string.IsNullOrWhiteSpace(stdErr) ? "SSH 执行超时（STDIN 模式）。" : stdErr;
-                        return false;
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                    }))
+                    {
+                        if (!process.WaitForExit(timeoutMs))
+                        {
+                            try { process.Kill(); } catch { }
+                            stdErr = string.IsNullOrWhiteSpace(stdErr) ? "SSH 执行超时（STDIN 模式）。" : stdErr;
+                            return false;
+                        }
                     }
 
                     CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        stdErr = "SSH 后台只读查询已取消。";
+                        return false;
+                    }
 
                     var ok = process.ExitCode == 0;
                     return ok;
@@ -5726,6 +5785,7 @@ namespace WpfApp1
 
         private async void ContainerDeviceSelector_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            CancelAllContainerBackgroundRefreshes();
             var selectedDeviceName = GetSelectedContainerDeviceName();
             BindContainerRows(selectedDeviceName);
 
@@ -5742,6 +5802,21 @@ namespace WpfApp1
             {
                 Debug.WriteLine("Refresh container rows on device switch failed: " + ex.Message);
             }
+        }
+
+        private static bool ShouldRetrySshWithStdinPassword(string stdOut, string stdErr)
+        {
+            if (!string.IsNullOrWhiteSpace(stdOut))
+            {
+                return false;
+            }
+
+            var error = (stdErr ?? string.Empty).ToLowerInvariant();
+            return error.Contains("askpass") ||
+                   error.Contains("no tty present") ||
+                   error.Contains("unable to read password") ||
+                   error.Contains("authentication failed") ||
+                   error.Contains("permission denied (publickey,password");
         }
 
         private void BindContainerRows(string deviceName)
@@ -7886,8 +7961,9 @@ namespace WpfApp1
                 return;
             }
 
-            var summaryVersion = InvalidateContainerRefresh(context);
-            var query = await Task.Run(() => QueryContainerSummary(context));
+            var refreshState = BeginContainerDetailRefresh(context);
+            var summaryVersion = refreshState.Item1;
+            var query = await Task.Run(() => QueryContainerSummary(context, refreshState.Item2));
             if (!IsContainerRefreshVersionCurrent(context, summaryVersion))
             {
                 return;
@@ -7911,7 +7987,6 @@ namespace WpfApp1
                 SetContainerPageState(query.Containers.Count == 0 ? "暂无容器" : "设备在线，概要已同步", true, false);
             }
 
-            var refreshState = BeginContainerDetailRefresh(context);
             var containerIdSnapshot = BuildContainerIdSnapshot(query.Containers);
             StartContainerDetailsRefresh(context, deviceName, query.Containers, containerIdSnapshot, refreshState.Item1, refreshState.Item2);
         }
