@@ -20,7 +20,6 @@ namespace WpfApp1
         private readonly HashSet<string> _containerIdsInOperation = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _remoteDockerRouteLock = new object();
         private readonly Dictionary<string, RemoteDockerRoute> _remoteDockerRoutes = new Dictionary<string, RemoteDockerRoute>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, string> _containerSizeCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _lightweightDetailCacheLock = new object();
         private readonly Dictionary<string, LightweightDetailSnapshot> _lightweightDetailCache = new Dictionary<string, LightweightDetailSnapshot>(StringComparer.OrdinalIgnoreCase);
 
@@ -159,14 +158,6 @@ namespace WpfApp1
             _containerRows.RemoveAll(row =>
                 string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
                 !remoteIds.Contains(row.FullId ?? string.Empty));
-            var sizeKeyPrefix = contextName + "|";
-            foreach (var staleSizeKey in _containerSizeCache.Keys
-                .Where(key => key.StartsWith(sizeKeyPrefix, StringComparison.OrdinalIgnoreCase) &&
-                              !remoteIds.Contains(key.Substring(sizeKeyPrefix.Length)))
-                .ToList())
-            {
-                _containerSizeCache.Remove(staleSizeKey);
-            }
 
             var rowIndexes = _containerRows
                 .Select((row, index) => new { Row = row, Index = index })
@@ -187,11 +178,6 @@ namespace WpfApp1
 
                 if (index < 0)
                 {
-                    string cachedSize;
-                    if (!_containerSizeCache.TryGetValue(contextName + "|" + container.Id, out cachedSize))
-                    {
-                        cachedSize = "-";
-                    }
                     _containerRows.Add(new ContainerComposeRow(
                         deviceName,
                         ShortContainerId(container.Id),
@@ -203,17 +189,26 @@ namespace WpfApp1
                         "-", "-", "-", "-", "-",
                         container.Status,
                         container.Id,
-                        cachedSize));
+                        "-"));
                     rowIndexes[container.Id] = _containerRows.Count - 1;
                     continue;
                 }
 
                 var current = _containerRows[index];
                 var summaryPorts = string.IsNullOrWhiteSpace(container.Ports) ? current.Ports : container.Ports;
+                var isRunning = string.Equals(container.State, "running", StringComparison.OrdinalIgnoreCase);
+                var cpuPercent = isRunning ? current.CpuPercent : "-";
+                var memoryUsage = isRunning ? current.MemoryUsage : "-";
+                var memoryPercent = isRunning ? current.MemoryPercent : "-";
+                var diskReadWrite = isRunning ? current.DiskReadWrite : "-";
                 if (!string.Equals(current.Name, normalizedName, StringComparison.Ordinal) ||
                     !string.Equals(current.Image, NormalizeImageNameWithTag(container.Image), StringComparison.Ordinal) ||
                     !string.Equals(current.Status, container.State, StringComparison.OrdinalIgnoreCase) ||
                     !string.Equals(current.Ports, summaryPorts, StringComparison.Ordinal) ||
+                    !string.Equals(current.CpuPercent, cpuPercent, StringComparison.Ordinal) ||
+                    !string.Equals(current.MemoryUsage, memoryUsage, StringComparison.Ordinal) ||
+                    !string.Equals(current.MemoryPercent, memoryPercent, StringComparison.Ordinal) ||
+                    !string.Equals(current.DiskReadWrite, diskReadWrite, StringComparison.Ordinal) ||
                     !string.Equals(current.Detail, container.Status, StringComparison.Ordinal))
                 {
                     _containerRows[index] = new ContainerComposeRow(
@@ -225,10 +220,10 @@ namespace WpfApp1
                         container.State,
                         summaryPorts,
                         current.CpuCores,
-                        current.CpuPercent,
-                        current.MemoryUsage,
-                        current.MemoryPercent,
-                        current.DiskReadWrite,
+                        cpuPercent,
+                        memoryUsage,
+                        memoryPercent,
+                        diskReadWrite,
                         container.Status,
                         current.FullId,
                         current.Size);
@@ -461,10 +456,6 @@ namespace WpfApp1
                     }
                 }
 
-                if (IsContainerRefreshCurrent(contextName, version, token))
-                {
-                    StartContainerSizeLazyRefresh(contextName, deviceName, fixedContainerIds, version, token);
-                }
             }
             catch (OperationCanceledException)
             {
@@ -1077,113 +1068,6 @@ namespace WpfApp1
                 return DockerCommandExecutionResult.CancelledResult(stdOut, stdErr);
             }
             return CreateDockerCommandResult(true, ok ? 0 : 1, stdOut, stdErr, false, false);
-        }
-
-        private async void StartContainerSizeLazyRefresh(
-            string contextName,
-            string deviceName,
-            List<string> containerIds,
-            int version,
-            CancellationToken cancellationToken)
-        {
-            try
-            {
-                await Task.Delay(750, cancellationToken);
-                var batches = BuildContainerIdBatches(containerIds, 40, 6000);
-                for (var i = 0; i < batches.Count; i++)
-                {
-                    if (!IsContainerRefreshCurrent(contextName, version, cancellationToken))
-                    {
-                        return;
-                    }
-
-                    var ids = batches[i];
-                    var command = "container inspect --size --format \"{{.Id}}|{{.SizeRw}}\" " + string.Join(" ", ids);
-                    var stopwatch = Stopwatch.StartNew();
-                    var execution = await Task.Run(() => ExecuteDockerCommandDetailed(command, contextName, 45000, cancellationToken));
-                    stopwatch.Stop();
-                    RecordContainerRefreshTiming("container-size-lazy", contextName, "ids=" + ids.Count, stopwatch.ElapsedMilliseconds, execution.Succeeded);
-                    if (execution.Cancelled)
-                    {
-                        return;
-                    }
-
-                    var sizes = ParseContainerSizes(execution.StandardOutput, new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase));
-                    if (sizes.Count > 0)
-                    {
-                        await Dispatcher.InvokeAsync(() => ApplyContainerSizes(
-                            contextName, deviceName, sizes, version, cancellationToken));
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("Container size lazy refresh failed: " + ex.Message);
-            }
-        }
-
-        private static Dictionary<string, string> ParseContainerSizes(string output, HashSet<string> allowedIds)
-        {
-            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            for (var i = 0; i < lines.Length; i++)
-            {
-                var parts = lines[i].Split('|');
-                long bytes;
-                var id = parts.Length > 0 ? parts[0].Trim() : string.Empty;
-                if (parts.Length == 2 && allowedIds.Contains(id) && !result.ContainsKey(id) &&
-                    long.TryParse(parts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out bytes) && bytes >= 0)
-                {
-                    result[id] = FormatBytes(bytes);
-                }
-            }
-            return result;
-        }
-
-        private void ApplyContainerSizes(
-            string contextName,
-            string deviceName,
-            Dictionary<string, string> sizes,
-            int version,
-            CancellationToken cancellationToken)
-        {
-            if (!IsContainerRefreshCurrent(contextName, version, cancellationToken))
-            {
-                return;
-            }
-
-            var indexes = _containerRows
-                .Select((row, index) => new { Row = row, Index = index })
-                .Where(item => string.Equals(item.Row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
-                .GroupBy(item => item.Row.FullId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.First().Index, StringComparer.OrdinalIgnoreCase);
-            var changed = false;
-            foreach (var pair in sizes)
-            {
-                _containerSizeCache[contextName + "|" + pair.Key] = pair.Value;
-                int index;
-                if (!indexes.TryGetValue(pair.Key, out index))
-                {
-                    continue;
-                }
-                var current = _containerRows[index];
-                if (string.Equals(current.Size, pair.Value, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                _containerRows[index] = new ContainerComposeRow(
-                    current.DeviceName, current.Id, current.Name, current.ChineseName, current.Image, current.Status,
-                    current.Ports, current.CpuCores, current.CpuPercent, current.MemoryUsage, current.MemoryPercent,
-                    current.DiskReadWrite, current.Detail, current.FullId, pair.Value);
-                changed = true;
-            }
-            if (changed && string.Equals(GetSelectedContainerDeviceName(), deviceName, StringComparison.OrdinalIgnoreCase))
-            {
-                BindContainerRows(deviceName);
-            }
         }
 
         private DockerCommandExecutionResult ExecuteDockerCommandDetailed(

@@ -934,10 +934,10 @@
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
                                     <DataGridTextColumn Header="CPU (%)" Width="90" Binding="{Binding CpuPercent}" />
+                                    <DataGridTextColumn Header="MEM USAGE / LIMIT" Width="170" Binding="{Binding MemoryUsage}" />
                                     <DataGridTextColumn Header="Memory (%)" Width="95" Binding="{Binding MemoryPercent}" />
                                     <DataGridTextColumn Header="Disk read/write" Width="150" Binding="{Binding DiskReadWrite}" />
                                     <DataGridTextColumn Header="Port(s)" Width="130" Binding="{Binding Ports}" />
-                                    <DataGridTextColumn Header="Size" Width="160" Binding="{Binding Size}" />
                                     <DataGridTextColumn Header="详情" Width="260" Binding="{Binding Detail}" />
                                     <DataGridTextColumn Header="ID" Width="330" Binding="{Binding Id}" />
                                 </DataGrid.Columns>

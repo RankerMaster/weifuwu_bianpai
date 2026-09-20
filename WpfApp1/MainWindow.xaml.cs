@@ -47,7 +47,6 @@ namespace WpfApp1
         private readonly Dictionary<string, SortDescription> _gridSortStates = new Dictionary<string, SortDescription>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _hostCpuLimitTextByContext = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _hostMemoryLimitMbByContext = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> _containerSizeBackfillRunningContexts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private bool _suppressContainerDeviceSelectionRefresh;
         private bool _isCollectingReadTimings;
         private readonly object _readTimingLock = new object();
@@ -6154,7 +6153,7 @@ namespace WpfApp1
                         {
                             progressStageText.Text = "阶段：补查新容器运行指标";
                         }
-                        SetProgressText(progressText, "正在补查新容器指标：docker ps -a --size / docker stats");
+                SetProgressText(progressText, "正在补查新容器指标：docker ps -a / docker stats");
 
                         var latestInfo = await Task.Run(() => ReadSingleContainerInfo(contextName, createdContainerId, request.ContainerName));
                         var latestStats = await Task.Run(() => ReadSingleContainerStatsInfo(contextName, createdContainerId));
@@ -8018,125 +8017,6 @@ namespace WpfApp1
 
             var fallback = (fallbackPorts ?? string.Empty).Trim();
             return string.IsNullOrWhiteSpace(fallback) ? "-" : fallback;
-        }
-
-        private void StartContainerSizeBackfill(string contextName, string deviceName)
-        {
-            var context = (contextName ?? string.Empty).Trim();
-            var device = (deviceName ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(context) || string.IsNullOrWhiteSpace(device))
-            {
-                return;
-            }
-
-            lock (_containerSizeBackfillRunningContexts)
-            {
-                if (_containerSizeBackfillRunningContexts.Contains(context))
-                {
-                    return;
-                }
-
-                _containerSizeBackfillRunningContexts.Add(context);
-            }
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var rowsSnapshot = _containerRows
-                        .Where(r =>
-                            string.Equals(r.DeviceName, device, StringComparison.OrdinalIgnoreCase) &&
-                            (string.IsNullOrWhiteSpace(r.Size) || r.Size == "-"))
-                        .ToList();
-
-                    for (var i = 0; i < rowsSnapshot.Count; i++)
-                    {
-                        var row = rowsSnapshot[i];
-                        var fullId = row.FullId;
-                        if (string.IsNullOrWhiteSpace(fullId))
-                        {
-                            continue;
-                        }
-
-                        string output;
-                        var inspectCmd = string.Format("container inspect --size \"{0}\" --format \"{{{{.SizeRw}}}}\"", fullId);
-                        var ok = TryRunDockerCommand(inspectCmd, context, out output, 10000);
-                        if (!ok)
-                        {
-                            continue;
-                        }
-
-                        var text = (output ?? string.Empty).Trim();
-                        long sizeBytes;
-                        if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out sizeBytes) || sizeBytes < 0)
-                        {
-                            continue;
-                        }
-
-                        var sizeText = FormatBytes(sizeBytes);
-                        if (!Dispatcher.CheckAccess())
-                        {
-                            await Dispatcher.InvokeAsync(() => UpdateContainerRowSize(device, fullId, sizeText));
-                        }
-                        else
-                        {
-                            UpdateContainerRowSize(device, fullId, sizeText);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("Container size backfill failed: " + ex.Message);
-                }
-                finally
-                {
-                    lock (_containerSizeBackfillRunningContexts)
-                    {
-                        _containerSizeBackfillRunningContexts.Remove(context);
-                    }
-                }
-            });
-        }
-
-        private void UpdateContainerRowSize(string deviceName, string fullId, string sizeText)
-        {
-            if (string.IsNullOrWhiteSpace(deviceName) || string.IsNullOrWhiteSpace(fullId))
-            {
-                return;
-            }
-
-            var index = _containerRows.FindIndex(r =>
-                string.Equals(r.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
-                IsContainerMatch(r, fullId));
-            if (index < 0)
-            {
-                return;
-            }
-
-            var current = _containerRows[index];
-            _containerRows[index] = new ContainerComposeRow(
-                current.DeviceName,
-                current.Id,
-                current.Name,
-                current.ChineseName,
-                current.Image,
-                current.Status,
-                current.Ports,
-                current.CpuCores,
-                current.CpuPercent,
-                current.MemoryUsage,
-                current.MemoryPercent,
-                current.DiskReadWrite,
-                current.Detail,
-                current.FullId,
-                string.IsNullOrWhiteSpace(sizeText) ? "-" : sizeText);
-
-            var selectedDeviceName = GetSelectedContainerDeviceName();
-            if (string.IsNullOrWhiteSpace(selectedDeviceName) ||
-                string.Equals(selectedDeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
-            {
-                BindContainerRows(selectedDeviceName);
-            }
         }
 
         private string GetDeviceNameByContextName(string contextName)
