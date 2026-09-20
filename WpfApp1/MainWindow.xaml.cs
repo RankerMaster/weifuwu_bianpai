@@ -7912,7 +7912,8 @@ namespace WpfApp1
             }
 
             var refreshState = BeginContainerDetailRefresh(context);
-            StartContainerDetailsRefresh(context, deviceName, query.Containers, refreshState.Item1, refreshState.Item2);
+            var containerIdSnapshot = BuildContainerIdSnapshot(query.Containers);
+            StartContainerDetailsRefresh(context, deviceName, query.Containers, containerIdSnapshot, refreshState.Item1, refreshState.Item2);
         }
 
         private void ApplyRefreshedContainerRows(string deviceName, List<ContainerComposeRow> refreshedRows)
