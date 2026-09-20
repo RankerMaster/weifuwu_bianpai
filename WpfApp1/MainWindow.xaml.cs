@@ -41,7 +41,6 @@ namespace WpfApp1
         private readonly Dictionary<string, int> _preferredSshDockerCandidateIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private Window _containerLoadingWindow;
         private bool _hasReadDeviceInfo;
-        private bool _isContainerActionRunning;
         private const string SshContextPrefix = "SSH:";
         private const string DashboardAllDevicesSelectionKey = "__DASHBOARD_ALL_DEVICES__";
         private readonly Dictionary<string, SortDescription> _gridSortStates = new Dictionary<string, SortDescription>(StringComparer.OrdinalIgnoreCase);
@@ -1334,11 +1333,6 @@ namespace WpfApp1
 
         private async void ContainerModifyNameMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
-            if (_isContainerActionRunning)
-            {
-                return;
-            }
-
             var selectedRow = ContainerComposeGrid == null ? null : ContainerComposeGrid.SelectedItem as ContainerComposeRow;
             if (selectedRow == null)
             {
@@ -1395,8 +1389,18 @@ namespace WpfApp1
                 return;
             }
 
-            _isContainerActionRunning = true;
-            SetContainerActionButtonsEnabled(false);
+            if (!await ConfirmContainerOperationAsync(contextName, new List<ContainerComposeRow> { selectedRow }))
+            {
+                return;
+            }
+
+            List<string> lockedContainerIds;
+            if (!TryLockContainerRows(new[] { selectedRow }, out lockedContainerIds))
+            {
+                MessageBox.Show(this, "该容器正在执行其他操作，请稍后重试。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
             Window progressWindow = null;
             TextBlock progressText = null;
             try
@@ -1407,7 +1411,7 @@ namespace WpfApp1
                 progressWindow.Show();
                 await Dispatcher.Yield(DispatcherPriority.Background);
 
-                var renameSource = string.IsNullOrWhiteSpace(selectedRow.FullId) ? oldName : selectedRow.FullId;
+                var renameSource = selectedRow.FullId;
                 var renameCommand = string.Format("rename \"{0}\" \"{1}\"", renameSource, normalizedNewName);
                 var renameOut = string.Empty;
                 var renameOk = await Task.Run(() => TryRunDockerCommand(renameCommand, contextName, out renameOut));
@@ -1477,8 +1481,8 @@ namespace WpfApp1
                     }
                 }
 
-                _isContainerActionRunning = false;
-                SetContainerActionButtonsEnabled(true);
+                UnlockContainerRows(lockedContainerIds);
+                UpdateContainerActionAvailability();
                 RestoreMainWindowFocus();
             }
         }
@@ -5730,43 +5734,13 @@ namespace WpfApp1
                 return;
             }
 
-            var contextName = GetSelectedContainerContextName();
-            if (string.IsNullOrWhiteSpace(contextName))
-            {
-                return;
-            }
-
-            Window progressWindow = null;
             try
             {
-                progressWindow = ShowContainerLoadingWindowIfActive("正在刷新容器列表与资源指标...");
-                if (progressWindow == null)
-                {
-                    return;
-                }
-                await Dispatcher.Yield(DispatcherPriority.Background);
-                await RefreshFullContainerRowsForContextAsync(contextName);
+                await RefreshSelectedContainerDeviceAsync();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine("Refresh container rows on device switch failed: " + ex.Message);
-            }
-            finally
-            {
-                if (progressWindow != null)
-                {
-                    try
-                    {
-                        progressWindow.Close();
-                        if (ReferenceEquals(_containerLoadingWindow, progressWindow))
-                        {
-                            _containerLoadingWindow = null;
-                        }
-                    }
-                    catch
-                    {
-                    }
-                }
             }
         }
 
@@ -5791,13 +5765,7 @@ namespace WpfApp1
                 return;
             }
 
-            if (_isContainerActionRunning)
-            {
-                return;
-            }
-
-            _isContainerActionRunning = true;
-            SetContainerActionButtonsEnabled(false);
+            var lockedContainerIds = new List<string>();
             Window progressWindow = null;
             TextBlock progressText = null;
             TextBlock progressStageText = null;
@@ -5821,6 +5789,28 @@ namespace WpfApp1
 
                 var selectedRow = selectedRows.FirstOrDefault();
 
+                var targetsSelectedContainers =
+                    action == "启动容器" ||
+                    action == "停止容器" ||
+                    action == "删除容器" ||
+                    action == "模型部署" ||
+                    action == "算法部署";
+                var defersValidationUntilAfterDialog = action == "创建容器" || action == "压力测试";
+                if (action != "查看日志" && !defersValidationUntilAfterDialog)
+                {
+                    var rowsToConfirm = targetsSelectedContainers ? selectedRows : new List<ContainerComposeRow>();
+                    if (!await ConfirmContainerOperationAsync(contextName, rowsToConfirm))
+                    {
+                        return;
+                    }
+
+                    if (targetsSelectedContainers && selectedRows.Count > 0 && !TryLockContainerRows(selectedRows, out lockedContainerIds))
+                    {
+                        MessageBox.Show(this, "所选容器正在执行其他操作，请稍后重试。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                        return;
+                    }
+                }
+
                 if (action == "压力测试")
                 {
                     var deviceName = GetSelectedContainerDeviceName();
@@ -5833,6 +5823,11 @@ namespace WpfApp1
 
                     var request = ShowContainerStressTestDialog(imageCandidates);
                     if (request == null)
+                    {
+                        return;
+                    }
+
+                    if (!await ConfirmContainerOperationAsync(contextName, new List<ContainerComposeRow>()))
                     {
                         return;
                     }
@@ -5854,6 +5849,11 @@ namespace WpfApp1
 
                     var request = ShowCreateContainerDialog(contextName, imageCandidates);
                     if (request == null)
+                    {
+                        return;
+                    }
+
+                    if (!await ConfirmContainerOperationAsync(contextName, new List<ContainerComposeRow>()))
                     {
                         return;
                     }
@@ -6194,7 +6194,7 @@ namespace WpfApp1
                 }
 
                 var containerIds = selectedRows
-                    .Select(r => string.IsNullOrWhiteSpace(r.FullId) ? r.Id : r.FullId)
+                    .Select(r => r.FullId)
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -6294,7 +6294,7 @@ namespace WpfApp1
                     for (var i = 0; i < selectedRows.Count; i++)
                     {
                         var row = selectedRows[i];
-                        var id = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+                        var id = row.FullId;
                         AddContainerOperationLog(contextName, action, id, row.Name, "失败", string.IsNullOrWhiteSpace(actionOut) ? "命令执行失败。" : actionOut.Trim());
                     }
                     CloseWindowQuietly(ref progressWindow);
@@ -6378,7 +6378,7 @@ namespace WpfApp1
                 for (var i = 0; i < selectedRows.Count; i++)
                 {
                     var row = selectedRows[i];
-                    var id = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+                    var id = row.FullId;
                     AddContainerOperationLog(
                         contextName,
                         action,
@@ -6432,8 +6432,8 @@ namespace WpfApp1
                     {
                     }
                 }
-                _isContainerActionRunning = false;
-                SetContainerActionButtonsEnabled(true);
+                UnlockContainerRows(lockedContainerIds);
+                UpdateContainerActionAvailability();
                 RestoreMainWindowFocus();
             }
         }
@@ -6531,7 +6531,8 @@ namespace WpfApp1
                 var actionButton = child as Button;
                 if (actionButton != null)
                 {
-                    actionButton.IsEnabled = enabled;
+                    var action = actionButton.Content as string ?? string.Empty;
+                    actionButton.IsEnabled = enabled || string.Equals(action, "查看日志", StringComparison.OrdinalIgnoreCase);
                 }
             }
         }
@@ -7451,9 +7452,14 @@ namespace WpfApp1
 
         private async Task CleanupStressTestContainersAsync(string contextName, List<string> containerNames)
         {
-            for (var i = 0; i < containerNames.Count; i += 50)
+            var containerIds = (containerNames ?? new List<string>())
+                .Select(name => ResolveContainerIdByName(contextName, name))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var i = 0; i < containerIds.Count; i += 50)
             {
-                var chunk = containerNames.Skip(i).Take(50).Select(n => string.Format("\"{0}\"", n)).ToList();
+                var chunk = containerIds.Skip(i).Take(50).Select(id => string.Format("\"{0}\"", id)).ToList();
                 if (chunk.Count == 0)
                 {
                     continue;
@@ -7877,76 +7883,36 @@ namespace WpfApp1
             var deviceName = GetDeviceNameByContextName(context);
             if (string.IsNullOrWhiteSpace(deviceName))
             {
-                await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.FullDetails);
                 return;
             }
 
-            var oldDeviceRows = _containerRows
-                .Where(r => string.Equals(r.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            var refreshedRows = await Task.Run(() =>
+            var summaryVersion = InvalidateContainerRefresh(context);
+            var query = await Task.Run(() => QueryContainerSummary(context));
+            if (!IsContainerRefreshVersionCurrent(context, summaryVersion))
             {
-                var containers = ReadDockerContainers(context);
-                var statsById = ReadDockerContainerStats(context);
-                var hostCpuLimitText = ReadHostCpuLimitText(context);
-                var rows = new List<ContainerComposeRow>();
+                return;
+            }
 
-                for (var i = 0; i < containers.Count; i++)
+            if (!query.Success)
+            {
+                InvalidateContainerRefresh(context);
+                SetContainerDeviceOnline(context, false);
+                if (string.Equals(GetSelectedContainerContextName(), context, StringComparison.OrdinalIgnoreCase))
                 {
-                    var c = containers[i];
-                    DockerContainerStatsInfo stat;
-                    var hasStat = TryGetContainerStats(statsById, c.Id, out stat);
-                    var limitInfo = ReadContainerLimitInfo(context, c.Id);
-                    var oldRow = oldDeviceRows.FirstOrDefault(r => IsContainerMatch(r, c.Id));
-
-                    var normalizedName = c.Name.StartsWith("/") ? c.Name : "/" + c.Name;
-                    var cpuCores = BuildCpuCoresDisplayText(limitInfo.CpuCoresText, hostCpuLimitText);
-                    var memoryUsage = hasStat && !string.IsNullOrWhiteSpace(stat.MemoryUsageText)
-                        ? stat.MemoryUsageText
-                        : "-";
-                    memoryUsage = MergeMemoryUsageWithLimit(memoryUsage, limitInfo.MemoryLimitText);
-                    var cpuPercent = hasStat ? stat.CpuPercentText : "0%";
-                    var memoryPercent = hasStat ? stat.MemoryPercentText : "0%";
-                    var blockIo = hasStat ? stat.BlockIoText : "0B / 0B";
-                    var sizeText = string.IsNullOrWhiteSpace(c.Size)
-                        ? (oldRow == null ? "-" : (oldRow.Size ?? "-"))
-                        : c.Size;
-                    var portsText = ResolveContainerPortsForDisplay(context, c.Id, c.Ports, oldRow == null ? "-" : oldRow.Ports);
-
-                    rows.Add(new ContainerComposeRow(
-                        deviceName,
-                        ShortContainerId(c.Id),
-                        normalizedName,
-                        BuildChineseContainerName(c.Name),
-                        NormalizeImageNameWithTag(c.Image),
-                        string.IsNullOrWhiteSpace(c.State) ? "unknown" : c.State,
-                        string.IsNullOrWhiteSpace(portsText) ? "-" : portsText,
-                        string.IsNullOrWhiteSpace(cpuCores) ? "-" : cpuCores,
-                        string.IsNullOrWhiteSpace(cpuPercent) ? "0%" : cpuPercent,
-                        string.IsNullOrWhiteSpace(memoryUsage) ? "-" : memoryUsage,
-                        string.IsNullOrWhiteSpace(memoryPercent) ? "0%" : memoryPercent,
-                        string.IsNullOrWhiteSpace(blockIo) ? "0B / 0B" : blockIo,
-                        c.Status,
-                        c.Id,
-                        string.IsNullOrWhiteSpace(sizeText) ? "-" : sizeText));
+                    SetContainerPageState("设备离线，正在显示只读缓存数据", false, true);
                 }
-
-                return rows;
-            });
-
-            if (!Dispatcher.CheckAccess())
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    ApplyRefreshedContainerRows(deviceName, refreshedRows);
-                    StartContainerSizeBackfill(context, deviceName);
-                });
                 return;
             }
 
-            ApplyRefreshedContainerRows(deviceName, refreshedRows);
-            StartContainerSizeBackfill(context, deviceName);
+            ApplyContainerSummary(context, deviceName, query.Containers);
+            SetContainerDeviceOnline(context, true);
+            if (string.Equals(GetSelectedContainerContextName(), context, StringComparison.OrdinalIgnoreCase))
+            {
+                SetContainerPageState(query.Containers.Count == 0 ? "暂无容器" : "设备在线，概要已同步", true, false);
+            }
+
+            var refreshState = BeginContainerDetailRefresh(context);
+            StartContainerDetailsRefresh(context, deviceName, query.Containers, refreshState.Item1, refreshState.Item2);
         }
 
         private void ApplyRefreshedContainerRows(string deviceName, List<ContainerComposeRow> refreshedRows)
@@ -8010,7 +7976,7 @@ namespace WpfApp1
                     for (var i = 0; i < rowsSnapshot.Count; i++)
                     {
                         var row = rowsSnapshot[i];
-                        var fullId = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+                        var fullId = row.FullId;
                         if (string.IsNullOrWhiteSpace(fullId))
                         {
                             continue;
@@ -8479,15 +8445,13 @@ namespace WpfApp1
                 return false;
             }
 
-            var rowId = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+            var rowId = row.FullId;
             if (string.IsNullOrWhiteSpace(rowId))
             {
                 return false;
             }
 
-            return string.Equals(rowId, fullId, StringComparison.OrdinalIgnoreCase) ||
-                   rowId.StartsWith(fullId, StringComparison.OrdinalIgnoreCase) ||
-                   fullId.StartsWith(rowId, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(rowId, fullId, StringComparison.OrdinalIgnoreCase);
         }
 
         private string GetSelectedContainerDeviceName()

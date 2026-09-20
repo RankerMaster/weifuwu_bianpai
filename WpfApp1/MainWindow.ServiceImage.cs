@@ -1127,6 +1127,11 @@ namespace WpfApp1
                 return;
             }
 
+            if (!await ConfirmContainerOperationAsync(contextName, selectedRows))
+            {
+                return;
+            }
+
             // 按用户提供的路径图：CASS-Simulator/test.json
             const string targetPathInContainer = "/home/CASS-Simulator/test.json";
             var targetCount = selectedRows.Count;
@@ -1228,7 +1233,7 @@ namespace WpfApp1
                     }
 
                     var row = selectedRows[i];
-                    var containerId = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+                    var containerId = row.FullId;
                     if (string.IsNullOrWhiteSpace(containerId))
                     {
                         failed.Add((row.Name ?? "未知容器") + "：容器 ID 为空");

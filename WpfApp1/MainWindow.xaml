@@ -830,15 +830,30 @@
                                 BorderThickness="1"
                                 CornerRadius="8"
                                 Padding="14,8">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="容器列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="支持多选与批量操作" Margin="10,0,0,0" FontSize="13" Foreground="#5D6E86" VerticalAlignment="Center" />
-                            </Grid>
+                             <Grid>
+                                 <Grid.ColumnDefinitions>
+                                     <ColumnDefinition Width="Auto" />
+                                     <ColumnDefinition Width="Auto" />
+                                     <ColumnDefinition Width="*" />
+                                     <ColumnDefinition Width="Auto" />
+                                 </Grid.ColumnDefinitions>
+                                 <TextBlock Grid.Column="0" Text="容器列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" VerticalAlignment="Center" />
+                                 <TextBlock Grid.Column="1" Text="支持多选与批量操作" Margin="10,0,0,0" FontSize="13" Foreground="#5D6E86" VerticalAlignment="Center" />
+                                 <TextBlock x:Name="ContainerRefreshStatusText"
+                                            Grid.Column="2"
+                                            Margin="16,0,8,0"
+                                            Text="缓存数据，等待验证设备"
+                                            FontSize="13"
+                                            Foreground="#B45309"
+                                            TextAlignment="Right"
+                                            VerticalAlignment="Center" />
+                                 <Button x:Name="ContainerRetryButton"
+                                         Grid.Column="3"
+                                         Content="重试"
+                                         Padding="12,3"
+                                         Visibility="Collapsed"
+                                         Click="ContainerRetryButton_OnClick" />
+                             </Grid>
                         </Border>
 
                         <Border Grid.Row="4"
