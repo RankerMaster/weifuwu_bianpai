@@ -925,6 +925,15 @@
                                     <DataGridTextColumn Header="名称" Width="170" Binding="{Binding ChineseName}" />
                                     <DataGridTextColumn Header="镜像" Width="220" Binding="{Binding Image}" />
                                     <DataGridTextColumn Header="状态" Width="120" Binding="{Binding Status}" />
+                                    <DataGridTextColumn Header="COMMAND" Width="260" Binding="{Binding Command}">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="TextWrapping" Value="NoWrap" />
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                <Setter Property="ToolTip" Value="{Binding Command}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
                                     <DataGridTextColumn Header="CPU核数量" Width="180" Binding="{Binding CpuCores}">
                                         <DataGridTextColumn.ElementStyle>
                                             <Style TargetType="TextBlock">

@@ -104,7 +104,7 @@ namespace WpfApp1
             CancellationToken cancellationToken = default(CancellationToken))
         {
             var stopwatch = Stopwatch.StartNew();
-            const string command = "ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}\"";
+            const string command = "ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.Command}}\"";
             var execution = ExecuteDockerCommandDetailed(command, contextName, 10000, cancellationToken);
             stopwatch.Stop();
             RecordContainerRefreshTiming("container-summary", contextName, command, stopwatch.ElapsedMilliseconds, execution.Succeeded);
@@ -120,8 +120,8 @@ namespace WpfApp1
             var lines = execution.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
-                var parts = lines[i].Split('|');
-                if (parts.Length < 5 || string.IsNullOrWhiteSpace(parts[0]))
+                var parts = lines[i].Split(new[] { '|' }, 6);
+                if (parts.Length < 6 || string.IsNullOrWhiteSpace(parts[0]))
                 {
                     return ContainerSummaryQueryResult.Failed("容器概要查询返回格式无效。");
                 }
@@ -134,7 +134,8 @@ namespace WpfApp1
                     parts[4].Trim(),
                     status,
                     InferContainerStateFromStatus(status),
-                    "-"));
+                    "-",
+                    parts[5].Trim()));
             }
 
             return ContainerSummaryQueryResult.Succeeded(containers);
@@ -189,7 +190,8 @@ namespace WpfApp1
                         "-", "-", "-", "-", "-",
                         container.Status,
                         container.Id,
-                        "-"));
+                        "-",
+                        container.Command));
                     rowIndexes[container.Id] = _containerRows.Count - 1;
                     continue;
                 }
@@ -209,7 +211,8 @@ namespace WpfApp1
                     !string.Equals(current.MemoryUsage, memoryUsage, StringComparison.Ordinal) ||
                     !string.Equals(current.MemoryPercent, memoryPercent, StringComparison.Ordinal) ||
                     !string.Equals(current.DiskReadWrite, diskReadWrite, StringComparison.Ordinal) ||
-                    !string.Equals(current.Detail, container.Status, StringComparison.Ordinal))
+                    !string.Equals(current.Detail, container.Status, StringComparison.Ordinal) ||
+                    !string.Equals(current.Command, container.Command, StringComparison.Ordinal))
                 {
                     _containerRows[index] = new ContainerComposeRow(
                         current.DeviceName,
@@ -226,7 +229,8 @@ namespace WpfApp1
                         diskReadWrite,
                         container.Status,
                         current.FullId,
-                        current.Size);
+                        current.Size,
+                        container.Command);
                 }
             }
 
@@ -770,7 +774,7 @@ namespace WpfApp1
                 _containerRows[index] = new ContainerComposeRow(
                     current.DeviceName, current.Id, current.Name, current.ChineseName, current.Image, current.Status,
                     ports, cpuCores, cpuPercent, memoryUsage, memoryPercent,
-                    blockIo, current.Detail, current.FullId, size);
+                    blockIo, current.Detail, current.FullId, size, current.Command);
                 changed = true;
             }
 
@@ -820,7 +824,7 @@ namespace WpfApp1
                 _containerRows[index] = new ContainerComposeRow(
                     current.DeviceName, current.Id, current.Name, current.ChineseName, current.Image, current.Status,
                     current.Ports, current.CpuCores, stats.CpuPercentText, stats.MemoryUsageText,
-                    stats.MemoryPercentText, stats.BlockIoText, current.Detail, current.FullId, current.Size);
+                    stats.MemoryPercentText, stats.BlockIoText, current.Detail, current.FullId, current.Size, current.Command);
                 changed = true;
             }
 

@@ -1453,7 +1453,9 @@ namespace WpfApp1
                     logSourceRow.MemoryPercent,
                     logSourceRow.DiskReadWrite,
                     logSourceRow.Detail,
-                    string.IsNullOrWhiteSpace(logSourceRow.FullId) ? selectedRow.FullId : logSourceRow.FullId);
+                    string.IsNullOrWhiteSpace(logSourceRow.FullId) ? selectedRow.FullId : logSourceRow.FullId,
+                    logSourceRow.Size,
+                    logSourceRow.Command);
 
                 AddContainerOperationLog(
                     contextName,
@@ -2774,7 +2776,8 @@ namespace WpfApp1
                         hasStat ? stat.BlockIoText : "0B / 0B",
                         c.Status,
                         c.Id,
-                        c.Size));
+                        c.Size,
+                        c.Command));
                 }
             }
 
@@ -3359,7 +3362,7 @@ namespace WpfApp1
         private List<DockerContainerInfo> ReadDockerContainers(string contextName)
         {
             string output;
-            if (!TryRunDockerCommand("ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}\"", contextName, out output))
+            if (!TryRunDockerCommand("ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}|{{.Command}}\"", contextName, out output))
             {
                 return new List<DockerContainerInfo>();
             }
@@ -3368,8 +3371,8 @@ namespace WpfApp1
             var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
-                var parts = lines[i].Split('|');
-                if (parts.Length < 5)
+                var parts = lines[i].Split(new[] { '|' }, 6);
+                if (parts.Length < 6)
                 {
                     continue;
                 }
@@ -3382,7 +3385,8 @@ namespace WpfApp1
                     parts[3].Trim(),
                     status,
                     InferContainerStateFromStatus(status),
-                    "-"));
+                    "-",
+                    parts[5].Trim()));
             }
 
             return result;
@@ -3393,7 +3397,7 @@ namespace WpfApp1
             string output;
             if (!string.IsNullOrWhiteSpace(containerId))
             {
-                var byIdCmd = string.Format("ps -a --no-trunc --filter \"id={0}\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}\"", containerId);
+                var byIdCmd = string.Format("ps -a --no-trunc --filter \"id={0}\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}|{{{{.Command}}}}\"", containerId);
                 if (TryRunDockerCommand(byIdCmd, contextName, out output))
                 {
                     var row = ParseSingleContainerInfo(output);
@@ -3407,7 +3411,7 @@ namespace WpfApp1
             if (!string.IsNullOrWhiteSpace(containerName))
             {
                 var cleanName = containerName.Trim().TrimStart('/');
-                var byNameCmd = string.Format("ps -a --no-trunc --filter \"name=^{0}$\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}\"", cleanName);
+                var byNameCmd = string.Format("ps -a --no-trunc --filter \"name=^{0}$\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}|{{{{.Command}}}}\"", cleanName);
                 if (TryRunDockerCommand(byNameCmd, contextName, out output))
                 {
                     return ParseSingleContainerInfo(output);
@@ -3425,8 +3429,8 @@ namespace WpfApp1
                 return null;
             }
 
-            var parts = lines[0].Split('|');
-            if (parts.Length < 5)
+            var parts = lines[0].Split(new[] { '|' }, 6);
+            if (parts.Length < 6)
             {
                 return null;
             }
@@ -3439,7 +3443,8 @@ namespace WpfApp1
                 parts[3].Trim(),
                 status,
                 InferContainerStateFromStatus(status),
-                "-");
+                "-",
+                parts[5].Trim());
         }
 
         private static string InferContainerStateFromStatus(string status)
@@ -5932,8 +5937,13 @@ namespace WpfApp1
                         return;
                     }
 
+                    var createCommand = ShowCreateContainerCommandDialog(BuildCreateContainerCommand(request));
+                    if (string.IsNullOrWhiteSpace(createCommand))
+                    {
+                        return;
+                    }
+
                     var createOut = string.Empty;
-                    var createCommand = BuildCreateContainerCommand(request);
                     var resolveIdCommand = string.Format("ps -a --no-trunc --filter \"name=^{0}$\" --format \"{{{{.ID}}}}\"", request.ContainerName);
                     var inspectLimitCommand = "container inspect <containerId> --format \"{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.HostConfig.CpuQuota}}|{{.HostConfig.CpuPeriod}}|{{.HostConfig.CpusetCpus}}\"";
                     progressStageText = new TextBlock
@@ -6142,7 +6152,8 @@ namespace WpfApp1
                         createdRow == null ? "-" : createdRow.DiskReadWrite,
                         string.Empty,
                         createdContainerId ?? (createdRow == null ? string.Empty : createdRow.FullId),
-                        createdRow == null ? "-" : createdRow.Size);
+                        createdRow == null ? "-" : createdRow.Size,
+                        createdRow == null ? "-" : createdRow.Command);
                     if (!string.IsNullOrWhiteSpace(createdContainerId))
                     {
                         if (progressBar != null)
@@ -6175,7 +6186,8 @@ namespace WpfApp1
                             latestStats == null ? "-" : latestStats.BlockIoText,
                             latestInfo == null ? string.Empty : latestInfo.Status,
                             createdContainerId,
-                            latestInfo == null ? "-" : latestInfo.Size);
+                            latestInfo == null ? "-" : latestInfo.Size,
+                            latestInfo == null ? createdLogRow.Command : latestInfo.Command);
                     }
                     AppendContainerOperationCsvByDeviceName(
                         selectedDeviceNameForCreate,
@@ -7545,6 +7557,109 @@ namespace WpfApp1
             }
         }
 
+        private string ShowCreateContainerCommandDialog(string commandArgs)
+        {
+            var commandBox = new TextBox
+            {
+                Text = "docker " + (commandArgs ?? string.Empty).Trim(),
+                Height = 150,
+                AcceptsReturn = true,
+                AcceptsTab = true,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 14,
+                Padding = new Thickness(10)
+            };
+
+            var panel = new StackPanel { Margin = new Thickness(20) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "确认创建容器命令",
+                FontSize = 22,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(30, 41, 59)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "以下命令即将在当前设备上执行。你可以修改参数，请保留 docker create 命令前缀。",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromRgb(71, 85, 105)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            panel.Children.Add(commandBox);
+
+            var confirmButton = new Button
+            {
+                Content = "确认并执行",
+                Width = 110,
+                Height = 34,
+                Margin = new Thickness(0, 14, 8, 0),
+                IsDefault = true
+            };
+            var cancelButton = new Button
+            {
+                Content = "取消",
+                Width = 86,
+                Height = 34,
+                Margin = new Thickness(0, 14, 0, 0),
+                IsCancel = true
+            };
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            buttonPanel.Children.Add(confirmButton);
+            buttonPanel.Children.Add(cancelButton);
+            panel.Children.Add(buttonPanel);
+
+            var dialog = new Window
+            {
+                Title = "确认创建容器命令",
+                Width = 760,
+                Height = 350,
+                MinWidth = 620,
+                MinHeight = 320,
+                ResizeMode = ResizeMode.CanResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Content = panel
+            };
+
+            string editedCommandArgs = null;
+            confirmButton.Click += (_, __) =>
+            {
+                var fullCommand = (commandBox.Text ?? string.Empty)
+                    .Replace("\r", " ")
+                    .Replace("\n", " ")
+                    .Trim();
+                var match = Regex.Match(fullCommand, @"^docker(?:\.exe)?\s+(create(?:\s|$).*)$", RegexOptions.IgnoreCase);
+                if (!match.Success)
+                {
+                    MessageBox.Show(
+                        dialog,
+                        "请输入有效的 docker create 命令，并保留命令前缀。",
+                        "确认创建容器命令",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                editedCommandArgs = match.Groups[1].Value.Trim();
+                dialog.DialogResult = true;
+            };
+            dialog.Loaded += (_, __) =>
+            {
+                commandBox.Focus();
+                commandBox.CaretIndex = commandBox.Text.Length;
+            };
+
+            return dialog.ShowDialog() == true ? editedCommandArgs : null;
+        }
+
         private static string BuildCreateContainerCommand(CreateContainerRequest request)
         {
             var command = string.Format("create -it --name \"{0}\"", request.ContainerName);
@@ -8279,7 +8394,9 @@ namespace WpfApp1
                 row.MemoryPercent,
                 row.DiskReadWrite,
                 row.Detail,
-                row.FullId);
+                row.FullId,
+                row.Size,
+                row.Command);
         }
 
         private static string EscapeSimpleCsv(string value)
@@ -9011,7 +9128,7 @@ namespace WpfApp1
 
         private sealed class DockerContainerInfo
         {
-            public DockerContainerInfo(string id, string name, string image, string ports, string status, string state, string size)
+            public DockerContainerInfo(string id, string name, string image, string ports, string status, string state, string size, string command = "")
             {
                 Id = id;
                 Name = name;
@@ -9020,6 +9137,7 @@ namespace WpfApp1
                 Status = status;
                 State = state;
                 Size = size;
+                Command = string.IsNullOrWhiteSpace(command) ? "-" : command;
             }
 
             public string Id { get; }
@@ -9029,6 +9147,7 @@ namespace WpfApp1
             public string Status { get; }
             public string State { get; }
             public string Size { get; }
+            public string Command { get; }
         }
 
         private sealed class DockerContainerStatsInfo
