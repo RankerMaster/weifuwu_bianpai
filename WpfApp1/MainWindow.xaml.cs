@@ -89,6 +89,7 @@ namespace WpfApp1
             // 从持久化文件读取“镜像 ID/仓库标签 -> 中文名称”的映射，
             // 再为各 DataGrid 注册统一的列排序逻辑。
             LoadImageChineseNameStore();
+            LoadPromotedPreparedImageStore();
             RegisterGridSortingBehavior();
 
             // 删除上次运行生成的设备容器 CSV 日志，避免旧日志混入本次会话。
@@ -2529,12 +2530,13 @@ namespace WpfApp1
                     continue;
                 }
 
-                if (!tag.StartsWith("custom_image", StringComparison.OrdinalIgnoreCase))
+                var repoTag = repository + ":" + tag;
+                if (!tag.StartsWith("custom_image", StringComparison.OrdinalIgnoreCase) &&
+                    !_promotedPreparedImageRepoTags.Contains(NormalizeRepoTag(repoTag)))
                 {
                     continue;
                 }
 
-                var repoTag = repository + ":" + tag;
                 var chineseName = ResolveImageChineseName("LOCAL", "本地", string.Empty, repository, tag, img.Id);
                 rows.Add(new ImageComposeRow(
                     repoTag,

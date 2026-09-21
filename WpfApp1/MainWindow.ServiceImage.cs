@@ -25,6 +25,7 @@ namespace WpfApp1
         private string _stickySelectedBaseRepoTag = string.Empty;
         private readonly HashSet<string> _stickySelectedProgramKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _stickySelectedPreparedImageKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _promotedPreparedImageRepoTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         private enum ServiceImageAction
         {
@@ -564,6 +565,74 @@ namespace WpfApp1
             catch
             {
                 return string.Empty;
+            }
+        }
+
+        private string GetPromotedPreparedImageStorePath()
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (string.IsNullOrWhiteSpace(appData))
+            {
+                return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "service_image_list.store");
+            }
+
+            return Path.Combine(appData, "WpfApp1", "service_image_list.store");
+        }
+
+        private void LoadPromotedPreparedImageStore()
+        {
+            _promotedPreparedImageRepoTags.Clear();
+
+            try
+            {
+                var path = GetPromotedPreparedImageStorePath();
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+
+                var lines = File.ReadAllLines(path, Encoding.UTF8);
+                for (var i = 0; i < lines.Length; i++)
+                {
+                    var parts = lines[i].Split('\t');
+                    if (parts.Length != 2 || parts[0] != "v1")
+                    {
+                        continue;
+                    }
+
+                    var repoTag = NormalizeRepoTag(DecodeImageChineseNameStoreValue(parts[1]));
+                    if (!string.IsNullOrWhiteSpace(repoTag))
+                    {
+                        _promotedPreparedImageRepoTags.Add(repoTag);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Load service image list store failed: " + ex.Message);
+            }
+        }
+
+        private void SavePromotedPreparedImageStore()
+        {
+            try
+            {
+                var lines = _promotedPreparedImageRepoTags
+                    .OrderBy(repoTag => repoTag, StringComparer.OrdinalIgnoreCase)
+                    .Select(repoTag => "v1\t" + EncodeImageChineseNameStoreValue(repoTag))
+                    .ToList();
+                var path = GetPromotedPreparedImageStorePath();
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                File.WriteAllLines(path, lines, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Save service image list store failed: " + ex.Message);
             }
         }
 
@@ -2632,6 +2701,12 @@ namespace WpfApp1
                 var rmCmd = string.Format("image rm \"{0}\"", oldRepoTag);
                 await Task.Run(() => TryRunDockerCommand(rmCmd, null, out rmOut, 15000));
 
+                if (_promotedPreparedImageRepoTags.Remove(oldRepoTag))
+                {
+                    _promotedPreparedImageRepoTags.Add(NormalizeRepoTag(newRepoTag));
+                    SavePromotedPreparedImageStore();
+                }
+
                 SetProgressText(progressText, "正在刷新镜像列表...");
                 RefreshLocalServiceImageLists();
                 ShowServiceImagePanel();
@@ -2652,6 +2727,42 @@ namespace WpfApp1
             }
 
             MessageBox.Show("修改Name成功：\n" + newRepoTag, "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void SourceImageMoveToPreparedMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            var selectedRow = SourceImageGrid == null ? null : SourceImageGrid.SelectedItem as ImageComposeRow;
+            var repoTag = NormalizeRepoTag(selectedRow == null ? string.Empty : selectedRow.RepoTag);
+            if (selectedRow == null || string.IsNullOrWhiteSpace(repoTag))
+            {
+                MessageBox.Show("请先在基础镜像列表选中一行镜像。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _promotedPreparedImageRepoTags.Add(repoTag);
+            SavePromotedPreparedImageStore();
+
+            _sourceImages.RemoveAll(row =>
+                string.Equals(NormalizeRepoTag(row == null ? string.Empty : row.RepoTag), repoTag, StringComparison.OrdinalIgnoreCase));
+            if (!_preparedImages.Any(row =>
+                string.Equals(NormalizeRepoTag(row == null ? string.Empty : row.RepoTag), repoTag, StringComparison.OrdinalIgnoreCase)))
+            {
+                _preparedImages.Add(selectedRow);
+            }
+
+            BindServiceImageRows(GetSelectedServiceImageDeviceName());
+            var movedRow = PreparedImageGrid.Items
+                .Cast<object>()
+                .OfType<ImageComposeRow>()
+                .FirstOrDefault(row => string.Equals(NormalizeRepoTag(row.RepoTag), repoTag, StringComparison.OrdinalIgnoreCase));
+            if (movedRow != null)
+            {
+                PreparedImageGrid.SelectedItem = movedRow;
+                PreparedImageGrid.ScrollIntoView(movedRow);
+                PreparedImageGrid.Focus();
+            }
+
+            MessageBox.Show("已移入镜像列表，可直接进行部署等操作。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private async Task ExecuteDeleteImagesAsync(List<ImageComposeRow> imageRows)
@@ -2679,6 +2790,7 @@ namespace WpfApp1
 
             var successTags = new List<string>();
             var failedTags = new List<string>();
+            var promotedStoreChanged = false;
             for (var i = 0; i < imageRows.Count; i++)
             {
                 var row = imageRows[i];
@@ -2689,12 +2801,19 @@ namespace WpfApp1
 
                 if (await TryDeleteSingleImageAsync(row))
                 {
-                    successTags.Add(NormalizeRepoTag(row.RepoTag));
+                    var repoTag = NormalizeRepoTag(row.RepoTag);
+                    successTags.Add(repoTag);
+                    promotedStoreChanged |= _promotedPreparedImageRepoTags.Remove(repoTag);
                 }
                 else
                 {
                     failedTags.Add(NormalizeRepoTag(row.RepoTag));
                 }
+            }
+
+            if (promotedStoreChanged)
+            {
+                SavePromotedPreparedImageStore();
             }
 
             RefreshLocalServiceImageLists();
