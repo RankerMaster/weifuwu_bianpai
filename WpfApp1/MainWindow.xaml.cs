@@ -35,7 +35,7 @@ namespace WpfApp1
         private readonly List<ContainerOperationLog> _containerOperationLogs = new List<ContainerOperationLog>();
         private string _readLocalIp = string.Empty;
         private string _readTargetUser = "root";
-        private string _readTargetIp = "192.168.118.88";
+        private string _readTargetIp = "192.168.100.114";
         private readonly HashSet<string> _readTargetIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _sshPasswordByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastSshErrorByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -5939,7 +5939,11 @@ namespace WpfApp1
                         return;
                     }
 
-                    var createCommand = ShowCreateContainerCommandDialog(BuildCreateContainerCommand(request));
+                    var imageStartupInfo = await Task.Run(() => ReadImageStartupInfo(contextName, request.Image));
+                    var usesPosixShell = contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase);
+                    var createCommand = ShowCreateContainerCommandDialog(
+                        BuildCreateContainerCommand(request, imageStartupInfo.CommandArguments, usesPosixShell),
+                        imageStartupInfo);
                     if (string.IsNullOrWhiteSpace(createCommand))
                     {
                         return;
@@ -6671,6 +6675,131 @@ namespace WpfApp1
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private ImageStartupInfo ReadImageStartupInfo(string contextName, string image)
+        {
+            if (string.IsNullOrWhiteSpace(image))
+            {
+                return ImageStartupInfo.Failed("镜像名称为空。");
+            }
+
+            string output;
+            var command = string.Format(
+                "image inspect \"{0}\" --format \"{{{{json .Config.Entrypoint}}}}\t{{{{json .Config.Cmd}}}}\"",
+                image);
+            if (!TryRunDockerCommand(command, contextName, out output))
+            {
+                return ImageStartupInfo.Failed(BuildImageStartupReadError(output));
+            }
+
+            var raw = (output ?? string.Empty).Trim();
+            var parts = raw.Split(new[] { '\t' }, 2);
+            List<string> entrypointArguments;
+            List<string> commandArguments;
+            if (parts.Length != 2 ||
+                !TryParseDockerJsonStringArray(parts[0], out entrypointArguments) ||
+                !TryParseDockerJsonStringArray(parts[1], out commandArguments))
+            {
+                return ImageStartupInfo.Failed("镜像启动配置返回格式无法解析。");
+            }
+
+            return ImageStartupInfo.Succeeded(entrypointArguments, commandArguments);
+        }
+
+        private static string BuildImageStartupReadError(string output)
+        {
+            var detail = (output ?? string.Empty)
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Trim();
+            if (string.IsNullOrWhiteSpace(detail))
+            {
+                return "无法读取镜像启动配置。";
+            }
+
+            if (detail.Length > 180)
+            {
+                detail = detail.Substring(0, 180) + "...";
+            }
+
+            return "无法读取镜像启动配置：" + detail;
+        }
+
+        private static bool TryParseDockerJsonStringArray(string json, out List<string> values)
+        {
+            values = new List<string>();
+            var raw = (json ?? string.Empty).Trim();
+            if (string.Equals(raw, "null", StringComparison.OrdinalIgnoreCase) || raw == "[]")
+            {
+                return true;
+            }
+
+            if (!raw.StartsWith("[", StringComparison.Ordinal) || !raw.EndsWith("]", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var matches = Regex.Matches(raw, "\"(?<value>(?:\\\\.|[^\"\\\\])*)\"");
+            if (matches.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < matches.Count; i++)
+            {
+                values.Add(DecodeDockerJsonString(matches[i].Groups["value"].Value));
+            }
+
+            return true;
+        }
+
+        private static string DecodeDockerJsonString(string value)
+        {
+            var text = value ?? string.Empty;
+            var decoded = new StringBuilder(text.Length);
+            for (var i = 0; i < text.Length; i++)
+            {
+                var ch = text[i];
+                if (ch != '\\' || i + 1 >= text.Length)
+                {
+                    decoded.Append(ch);
+                    continue;
+                }
+
+                var escaped = text[++i];
+                switch (escaped)
+                {
+                    case '\"': decoded.Append('\"'); break;
+                    case '\\': decoded.Append('\\'); break;
+                    case '/': decoded.Append('/'); break;
+                    case 'b': decoded.Append('\b'); break;
+                    case 'f': decoded.Append('\f'); break;
+                    case 'n': decoded.Append('\n'); break;
+                    case 'r': decoded.Append('\r'); break;
+                    case 't': decoded.Append('\t'); break;
+                    case 'u':
+                        if (i + 4 < text.Length)
+                        {
+                            int codePoint;
+                            var hex = text.Substring(i + 1, 4);
+                            if (int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out codePoint))
+                            {
+                                decoded.Append((char)codePoint);
+                                i += 4;
+                                break;
+                            }
+                        }
+
+                        decoded.Append('u');
+                        break;
+                    default:
+                        decoded.Append(escaped);
+                        break;
+                }
+            }
+
+            return decoded.ToString();
         }
 
         private static bool IsCassImage(string image)
@@ -7559,12 +7688,13 @@ namespace WpfApp1
             }
         }
 
-        private string ShowCreateContainerCommandDialog(string commandArgs)
+        private string ShowCreateContainerCommandDialog(string commandArgs, ImageStartupInfo startupInfo)
         {
+            startupInfo = startupInfo ?? ImageStartupInfo.Failed("未获取到镜像启动配置。");
             var commandBox = new TextBox
             {
                 Text = "docker " + (commandArgs ?? string.Empty).Trim(),
-                Height = 150,
+                Height = 160,
                 AcceptsReturn = true,
                 AcceptsTab = true,
                 TextWrapping = TextWrapping.Wrap,
@@ -7575,7 +7705,12 @@ namespace WpfApp1
                 Padding = new Thickness(10)
             };
 
-            var panel = new StackPanel { Margin = new Thickness(20) };
+            var panel = new StackPanel
+            {
+                Width = 720,
+                Margin = new Thickness(0, 20, 0, 10),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
             panel.Children.Add(new TextBlock
             {
                 Text = "确认创建容器命令",
@@ -7584,9 +7719,33 @@ namespace WpfApp1
                 Foreground = new SolidColorBrush(Color.FromRgb(30, 41, 59)),
                 Margin = new Thickness(0, 0, 0, 10)
             });
+            var startupHasWarning = !startupInfo.ReadSucceeded ||
+                                    (startupInfo.EntrypointArguments.Count == 0 && startupInfo.CommandArguments.Count == 0);
             panel.Children.Add(new TextBlock
             {
-                Text = "以下命令即将在当前设备上执行。你可以修改参数，请保留 docker create 命令前缀。",
+                Text = "镜像启动配置",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(51, 65, 85)),
+                Margin = new Thickness(0, 0, 0, 6)
+            });
+            panel.Children.Add(new TextBox
+            {
+                Text = BuildImageStartupSummary(startupInfo),
+                Height = 92,
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 13,
+                Padding = new Thickness(8),
+                Background = new SolidColorBrush(startupHasWarning ? Color.FromRgb(255, 247, 237) : Color.FromRgb(248, 250, 252)),
+                Foreground = new SolidColorBrush(startupHasWarning ? Color.FromRgb(154, 52, 18) : Color.FromRgb(51, 65, 85)),
+                BorderBrush = new SolidColorBrush(startupHasWarning ? Color.FromRgb(253, 186, 116) : Color.FromRgb(203, 213, 225)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "以下命令即将在当前设备上执行。读取到的默认 CMD 已追加在镜像名后；你可以修改或补充启动命令，请保留 docker create 命令前缀。",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Color.FromRgb(71, 85, 105)),
                 Margin = new Thickness(0, 0, 0, 10)
@@ -7598,7 +7757,7 @@ namespace WpfApp1
                 Content = "确认并执行",
                 Width = 110,
                 Height = 34,
-                Margin = new Thickness(0, 14, 8, 0),
+                Margin = new Thickness(0, 0, 8, 0),
                 IsDefault = true
             };
             var cancelButton = new Button
@@ -7606,7 +7765,7 @@ namespace WpfApp1
                 Content = "取消",
                 Width = 86,
                 Height = 34,
-                Margin = new Thickness(0, 14, 0, 0),
+                Margin = new Thickness(0),
                 IsCancel = true
             };
             var buttonPanel = new StackPanel
@@ -7616,19 +7775,38 @@ namespace WpfApp1
             };
             buttonPanel.Children.Add(confirmButton);
             buttonPanel.Children.Add(cancelButton);
-            panel.Children.Add(buttonPanel);
+
+            var buttonHost = new Grid
+            {
+                Width = 720,
+                Height = 50,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            buttonPanel.VerticalAlignment = VerticalAlignment.Top;
+            buttonHost.Children.Add(buttonPanel);
+
+            var contentScroll = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = panel
+            };
+            var rootPanel = new DockPanel();
+            DockPanel.SetDock(buttonHost, Dock.Bottom);
+            rootPanel.Children.Add(buttonHost);
+            rootPanel.Children.Add(contentScroll);
 
             var dialog = new Window
             {
                 Title = "确认创建容器命令",
-                Width = 760,
-                Height = 350,
-                MinWidth = 620,
-                MinHeight = 320,
+                Width = 800,
+                Height = 540,
+                MinWidth = 780,
+                MinHeight = 460,
                 ResizeMode = ResizeMode.CanResize,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
-                Content = panel
+                Content = rootPanel
             };
 
             string editedCommandArgs = null;
@@ -7662,7 +7840,44 @@ namespace WpfApp1
             return dialog.ShowDialog() == true ? editedCommandArgs : null;
         }
 
-        private static string BuildCreateContainerCommand(CreateContainerRequest request)
+        private static string BuildImageStartupSummary(ImageStartupInfo startupInfo)
+        {
+            if (!startupInfo.ReadSucceeded)
+            {
+                return "ENTRYPOINT: 未知\nCMD: 未知\n" + startupInfo.ErrorMessage + "\n可在下方命令的镜像名后手动补充启动命令。";
+            }
+
+            var entrypointText = FormatImageStartupArguments(startupInfo.EntrypointArguments);
+            var commandText = FormatImageStartupArguments(startupInfo.CommandArguments);
+            if (startupInfo.CommandArguments.Count > 0)
+            {
+                return "ENTRYPOINT: " + entrypointText + "\nCMD: " + commandText + "\n默认 CMD 已追加到下方命令，可直接修改。";
+            }
+
+            if (startupInfo.EntrypointArguments.Count > 0)
+            {
+                return "ENTRYPOINT: " + entrypointText + "\nCMD: (未定义)\n容器将使用镜像 ENTRYPOINT；如需参数，可在镜像名后补充。";
+            }
+
+            return "ENTRYPOINT: (未定义)\nCMD: (未定义)\n该镜像没有默认启动命令，请在下方命令的镜像名后手动填写。";
+        }
+
+        private static string FormatImageStartupArguments(IList<string> arguments)
+        {
+            if (arguments == null || arguments.Count == 0)
+            {
+                return "(未定义)";
+            }
+
+            return "[" + string.Join(", ", arguments.Select(value =>
+                "\"" + (value ?? string.Empty)
+                    .Replace("\\", "\\\\")
+                    .Replace("\"", "\\\"")
+                    .Replace("\r", "\\r")
+                    .Replace("\n", "\\n") + "\"")) + "]";
+        }
+
+        private static string BuildCreateContainerCommand(CreateContainerRequest request, IList<string> imageCommandArguments, bool usesPosixShell)
         {
             var command = string.Format("create -it --name \"{0}\"", request.ContainerName);
             command += " --privileged";
@@ -7677,7 +7892,58 @@ namespace WpfApp1
             }
 
             command += string.Format(" \"{0}\"", request.Image);
+            if (imageCommandArguments != null)
+            {
+                for (var i = 0; i < imageCommandArguments.Count; i++)
+                {
+                    command += " " + QuoteDockerCommandArgument(imageCommandArguments[i], usesPosixShell);
+                }
+            }
+
             return command;
+        }
+
+        private static string QuoteDockerCommandArgument(string value, bool usesPosixShell)
+        {
+            var text = value ?? string.Empty;
+            if (text.Length > 0 && Regex.IsMatch(text, @"^[a-zA-Z0-9_./:@%+=,-]+$"))
+            {
+                return text;
+            }
+
+            if (usesPosixShell)
+            {
+                return "'" + EscapeShellSingleQuoted(text) + "'";
+            }
+
+            var quoted = new StringBuilder(text.Length + 2);
+            quoted.Append('\"');
+            var backslashCount = 0;
+            for (var i = 0; i < text.Length; i++)
+            {
+                var ch = text[i];
+                if (ch == '\\')
+                {
+                    backslashCount++;
+                    continue;
+                }
+
+                if (ch == '\"')
+                {
+                    quoted.Append('\\', backslashCount * 2 + 1);
+                    quoted.Append('\"');
+                    backslashCount = 0;
+                    continue;
+                }
+
+                quoted.Append('\\', backslashCount);
+                backslashCount = 0;
+                quoted.Append(ch);
+            }
+
+            quoted.Append('\\', backslashCount * 2);
+            quoted.Append('\"');
+            return quoted.ToString();
         }
 
         private Window CreateContainerLoadingWindow(string text)
@@ -8935,6 +9201,32 @@ namespace WpfApp1
             public string Action { get; }
             public string Result { get; }
             public string Detail { get; }
+        }
+
+        private sealed class ImageStartupInfo
+        {
+            private ImageStartupInfo(bool readSucceeded, List<string> entrypointArguments, List<string> commandArguments, string errorMessage)
+            {
+                ReadSucceeded = readSucceeded;
+                EntrypointArguments = entrypointArguments ?? new List<string>();
+                CommandArguments = commandArguments ?? new List<string>();
+                ErrorMessage = errorMessage ?? string.Empty;
+            }
+
+            public bool ReadSucceeded { get; }
+            public List<string> EntrypointArguments { get; }
+            public List<string> CommandArguments { get; }
+            public string ErrorMessage { get; }
+
+            public static ImageStartupInfo Succeeded(List<string> entrypointArguments, List<string> commandArguments)
+            {
+                return new ImageStartupInfo(true, entrypointArguments, commandArguments, string.Empty);
+            }
+
+            public static ImageStartupInfo Failed(string errorMessage)
+            {
+                return new ImageStartupInfo(false, new List<string>(), new List<string>(), errorMessage);
+            }
         }
 
         private sealed class CreateContainerRequest
