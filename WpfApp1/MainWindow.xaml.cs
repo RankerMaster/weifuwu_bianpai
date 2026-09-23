@@ -5847,6 +5847,8 @@ namespace WpfApp1
             }
 
             var lockedContainerIds = new List<string>();
+            var skippedContainerCount = 0;
+            var forceDeleteContainers = false;
             Window progressWindow = null;
             TextBlock progressText = null;
             TextBlock progressStageText = null;
@@ -5883,6 +5885,75 @@ namespace WpfApp1
                     if (!await ConfirmContainerOperationAsync(contextName, rowsToConfirm))
                     {
                         return;
+                    }
+
+                    if (action == "启动容器" || action == "停止容器" || action == "删除容器")
+                    {
+                        if (selectedRows.Count == 0)
+                        {
+                            MessageBox.Show(this, "请至少选中一行容器。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                            return;
+                        }
+
+                        selectedRows = selectedRows
+                            .Select(row => _containerRows.FirstOrDefault(current => IsContainerMatch(current, row.FullId)))
+                            .Where(row => row != null)
+                            .ToList();
+                        if (selectedRows.Count == 0)
+                        {
+                            MessageBox.Show(this, "所选容器已不存在，请刷新后重试。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            return;
+                        }
+
+                        if (action == "启动容器")
+                        {
+                            var actionableRows = selectedRows.Where(row => !IsContainerActiveForOperation(row)).ToList();
+                            skippedContainerCount = selectedRows.Count - actionableRows.Count;
+                            selectedRows = actionableRows;
+                            if (selectedRows.Count == 0)
+                            {
+                                MessageBox.Show(this, "所选容器均已处于运行状态，无需再次启动。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                                return;
+                            }
+                        }
+                        else if (action == "停止容器")
+                        {
+                            var actionableRows = selectedRows.Where(IsContainerActiveForOperation).ToList();
+                            skippedContainerCount = selectedRows.Count - actionableRows.Count;
+                            selectedRows = actionableRows;
+                            if (selectedRows.Count == 0)
+                            {
+                                MessageBox.Show(this, "所选容器均未运行，无需停止。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            forceDeleteContainers = selectedRows.Any(IsContainerActiveForOperation);
+                            var previewLines = selectedRows
+                                .Take(8)
+                                .Select(row => string.Format("• {0}（{1}）", (row.Name ?? row.Id).TrimStart('/'), row.Status))
+                                .ToList();
+                            if (selectedRows.Count > previewLines.Count)
+                            {
+                                previewLines.Add(string.Format("……另有 {0} 个容器", selectedRows.Count - previewLines.Count));
+                            }
+
+                            var deleteWarning = forceDeleteContainers
+                                ? string.Format("其中有 {0} 个容器仍在运行，将使用 docker rm -f 强制终止并删除。", selectedRows.Count(IsContainerActiveForOperation))
+                                : "所选容器均未运行，将使用 docker rm 删除。";
+                            var confirmText = string.Format(
+                                "即将删除 {0} 个容器：\n\n{1}\n\n{2}\n镜像、宿主机挂载目录和 Docker 卷不会被删除。\n\n是否继续？",
+                                selectedRows.Count,
+                                string.Join(Environment.NewLine, previewLines),
+                                deleteWarning);
+                            if (MessageBox.Show(this, confirmText, "确认删除容器", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                            {
+                                return;
+                            }
+                        }
+
+                        selectedRow = selectedRows.FirstOrDefault();
                     }
 
                     if (targetsSelectedContainers && selectedRows.Count > 0 && !TryLockContainerRows(selectedRows, out lockedContainerIds))
@@ -6305,10 +6376,10 @@ namespace WpfApp1
                         dockerActionCommand = "start " + quotedIds;
                         break;
                     case "停止容器":
-                        dockerActionCommand = "stop " + quotedIds;
+                        dockerActionCommand = "stop --time 10 " + quotedIds;
                         break;
                     case "删除容器":
-                        dockerActionCommand = "rm -f " + quotedIds;
+                        dockerActionCommand = (forceDeleteContainers ? "rm -f " : "rm ") + quotedIds;
                         break;
                     default:
                         MessageBox.Show(this, string.Format("暂不支持的操作：{0}", action), "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -6379,26 +6450,16 @@ namespace WpfApp1
                 {
                     progressStageText.Text = "阶段：执行启动命令";
                 }
-                var actionCommandTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase) ? 60000 : 12000;
+                var actionCommandTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase) ? 60000 : 30000;
                 var actionOk = await Task.Run(() => TryRunDockerCommand(dockerActionCommand, contextName, out actionOut, actionCommandTimeoutMs));
-                if (!actionOk)
-                {
-                    for (var i = 0; i < selectedRows.Count; i++)
-                    {
-                        var row = selectedRows[i];
-                        var id = row.FullId;
-                        AddContainerOperationLog(contextName, action, id, row.Name, "失败", string.IsNullOrWhiteSpace(actionOut) ? "命令执行失败。" : actionOut.Trim());
-                    }
-                    CloseWindowQuietly(ref progressWindow);
-                    MessageBox.Show(this, string.Format("{0}失败。", action), "容器编排", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
 
                 _lastOperatedContextName = contextName;
                 _lastOperatedContainerId = containerIds[0];
                 _lastOperatedContainerName = selectedRows[0].Name;
 
-                var waitTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase) ? 90000 : 5000;
+                var waitTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase)
+                    ? (actionOk ? 90000 : 20000)
+                    : 20000;
                 if (progressBar != null)
                 {
                     progressBar.Value = 80;
@@ -6409,7 +6470,7 @@ namespace WpfApp1
                 }
                 if (string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase))
                 {
-                    SetProgressText(progressText, "命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约90秒）");
+                    SetProgressText(progressText, string.Format("命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约{0}秒）", waitTimeoutMs / 1000));
                 }
                 else
                 {
@@ -6433,29 +6494,16 @@ namespace WpfApp1
                         SetProgressText(
                             progressText,
                             string.Format(
-                                "命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约90秒）\n已等待：{0}s",
+                                "命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约{0}秒）\n已等待：{1}s",
+                                waitTimeoutMs / 1000,
                                 Math.Max(1, (int)statusStopwatch.Elapsed.TotalSeconds)));
                     }
                 };
                 statusHeartbeat.Start();
-                var opVisible = await WaitForContainerRowsAsync(contextName, rows =>
-                {
-                    switch (action)
-                    {
-                        case "启动容器":
-                            return containerIds.All(id => rows.Any(r =>
-                                IsContainerMatch(r, id) &&
-                                string.Equals(r.Status, "running", StringComparison.OrdinalIgnoreCase)));
-                        case "停止容器":
-                            return containerIds.All(id => rows.Any(r =>
-                                IsContainerMatch(r, id) &&
-                                !string.Equals(r.Status, "running", StringComparison.OrdinalIgnoreCase)));
-                        case "删除容器":
-                            return containerIds.All(id => rows.All(r => !IsContainerMatch(r, id)));
-                        default:
-                            return true;
-                    }
-                }, timeoutMs: waitTimeoutMs);
+                await WaitForContainerRowsAsync(
+                    contextName,
+                    rows => containerIds.All(id => IsContainerActionSatisfied(action, id, rows)),
+                    timeoutMs: waitTimeoutMs);
                 statusHeartbeat.Stop();
 
                 if (progressBar != null)
@@ -6466,46 +6514,86 @@ namespace WpfApp1
                 {
                     progressStageText.Text = "阶段：刷新界面";
                 }
-                SetProgressText(progressText, string.Format("{0}完成，正在刷新界面...", actionVerb));
+                SetProgressText(progressText, string.Format("{0}命令已完成，正在核对每个容器的实际状态...", actionVerb));
+                var currentRows = _containerRows
+                    .Where(row => string.Equals(GetContainerContextNameByDevice(row.DeviceName), contextName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                var successfulRows = selectedRows
+                    .Where(row => IsContainerActionSatisfied(action, row.FullId, currentRows))
+                    .ToList();
+                var unresolvedRows = selectedRows
+                    .Where(row => !IsContainerActionSatisfied(action, row.FullId, currentRows))
+                    .ToList();
                 for (var i = 0; i < selectedRows.Count; i++)
                 {
                     var row = selectedRows[i];
                     var id = row.FullId;
+                    var stateConfirmed = successfulRows.Any(successfulRow => IsContainerMatch(successfulRow, id));
+                    var operationResult = stateConfirmed
+                        ? "成功"
+                        : (actionOk ? "命令成功，状态待确认" : "失败或状态待确认");
+                    var operationDetail = string.IsNullOrWhiteSpace(actionOut) ? string.Empty : actionOut.Trim();
+                    if (!stateConfirmed)
+                    {
+                        var stateMessage = actionOk
+                            ? "命令已执行，但未在预期时间内确认目标状态。"
+                            : "命令返回失败，且未确认目标状态。";
+                        operationDetail = string.IsNullOrWhiteSpace(operationDetail)
+                            ? stateMessage
+                            : stateMessage + Environment.NewLine + operationDetail;
+                    }
+                    else if (!actionOk)
+                    {
+                        operationDetail = string.IsNullOrWhiteSpace(operationDetail)
+                            ? "命令返回异常，但已确认实际状态符合预期。"
+                            : "命令返回异常，但已确认实际状态符合预期。" + Environment.NewLine + operationDetail;
+                    }
+
                     AddContainerOperationLog(
                         contextName,
                         action,
                         id,
                         row.Name,
-                        opVisible ? "成功" : "命令成功，待确认",
-                        string.IsNullOrWhiteSpace(actionOut) ? string.Empty : actionOut.Trim());
-                    AppendContainerOperationCsvByDeviceName(
-                        string.IsNullOrWhiteSpace(row.DeviceName) ? GetSelectedContainerDeviceName() : row.DeviceName,
-                        action,
-                        BuildContainerCsvLogRow(row, action));
-                }
-                if (string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase))
-                {
-                    CloseWindowQuietly(ref progressWindow);
-                    MessageBox.Show(
-                        this,
-                        opVisible
-                            ? string.Format("{0}成功，共处理 {1} 个容器。", action, containerIds.Count)
-                            : string.Format("{0}未在预期时间内完成，请检查容器日志和镜像配置。", action),
-                        "容器编排",
-                        MessageBoxButton.OK,
-                        opVisible ? MessageBoxImage.Information : MessageBoxImage.Warning);
-                    return;
+                        operationResult,
+                        operationDetail);
+                    if (stateConfirmed)
+                    {
+                        AppendContainerOperationCsvByDeviceName(
+                            string.IsNullOrWhiteSpace(row.DeviceName) ? GetSelectedContainerDeviceName() : row.DeviceName,
+                            action,
+                            BuildContainerCsvLogRow(row, action));
+                    }
                 }
 
+                await RefreshFullContainerRowsForContextAsync(contextName);
                 CloseWindowQuietly(ref progressWindow);
+                var summaryText = string.Format(
+                    "{0}完成：成功 {1} 个，未确认 {2} 个",
+                    action,
+                    successfulRows.Count,
+                    unresolvedRows.Count);
+                if (skippedContainerCount > 0)
+                {
+                    summaryText += string.Format("，已跳过 {0} 个无需操作的容器", skippedContainerCount);
+                }
+                summaryText += "。";
+                if (unresolvedRows.Count > 0)
+                {
+                    var unresolvedNames = string.Join("、", unresolvedRows
+                        .Take(8)
+                        .Select(row => (row.Name ?? row.Id).TrimStart('/')));
+                    summaryText += Environment.NewLine + "未确认：" + unresolvedNames;
+                    if (string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase))
+                    {
+                        summaryText += Environment.NewLine + "请检查容器日志和镜像启动配置。";
+                    }
+                }
                 MessageBox.Show(
                     this,
-                    opVisible
-                        ? string.Format("{0}成功，共处理 {1} 个容器。", action, containerIds.Count)
-                        : string.Format("{0}命令执行成功，但列表刷新稍慢，请稍后查看。", action),
+                    summaryText,
                     "容器编排",
                     MessageBoxButton.OK,
-                    opVisible ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                    unresolvedRows.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
             }
             catch (Exception ex)
             {
@@ -6547,6 +6635,42 @@ namespace WpfApp1
             finally
             {
                 window = null;
+            }
+        }
+
+        private static bool IsContainerActiveForOperation(ContainerComposeRow row)
+        {
+            if (row == null)
+            {
+                return false;
+            }
+
+            if (string.Equals(row.Status, "running", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var detail = (row.Detail ?? string.Empty).Trim();
+            return detail.StartsWith("Up", StringComparison.OrdinalIgnoreCase) ||
+                   detail.StartsWith("Restarting", StringComparison.OrdinalIgnoreCase) ||
+                   detail.StartsWith("Paused", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsContainerActionSatisfied(string action, string containerId, IList<ContainerComposeRow> rows)
+        {
+            var matchedRow = (rows ?? new List<ContainerComposeRow>())
+                .FirstOrDefault(row => IsContainerMatch(row, containerId));
+            switch (action)
+            {
+                case "启动容器":
+                    return matchedRow != null &&
+                           string.Equals(matchedRow.Status, "running", StringComparison.OrdinalIgnoreCase);
+                case "停止容器":
+                    return matchedRow != null && !IsContainerActiveForOperation(matchedRow);
+                case "删除容器":
+                    return matchedRow == null;
+                default:
+                    return true;
             }
         }
 
@@ -8296,6 +8420,13 @@ namespace WpfApp1
                 return false;
             }
 
+            var deviceName = GetDeviceNameByContextName(context);
+            if (string.IsNullOrWhiteSpace(deviceName))
+            {
+                return false;
+            }
+
+            var summaryVersion = InvalidateContainerRefresh(context);
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
@@ -8305,7 +8436,7 @@ namespace WpfApp1
                     return false;
                 }
 
-                var refreshTask = RefreshFullContainerRowsForContextAsync(context);
+                var refreshTask = Task.Run(() => QueryContainerSummary(context));
                 var refreshCompleted = await Task.WhenAny(
                     refreshTask,
                     Task.Delay(remainingMs));
@@ -8314,7 +8445,20 @@ namespace WpfApp1
                     return false;
                 }
 
-                await refreshTask;
+                var query = await refreshTask;
+                if (!IsContainerRefreshVersionCurrent(context, summaryVersion))
+                {
+                    return false;
+                }
+
+                if (!query.Success)
+                {
+                    await Task.Delay(Math.Min(1000, Math.Max(1, remainingMs)));
+                    continue;
+                }
+
+                ApplyContainerSummary(context, deviceName, query.Containers);
+                SetContainerDeviceOnline(context, true);
                 var rows = _containerRows
                     .Where(r => string.Equals(GetContainerContextNameByDevice(r.DeviceName), context, StringComparison.OrdinalIgnoreCase))
                     .ToList();
