@@ -49,3 +49,9 @@ Thumbs.db
 /WpfApp1/obj_codex/Debug
 /tools
 /智能组件及接口示例.zip
+
+# Generated image caches and exports
+/dockerbuild_workspace/deploy_cache/
+/dockerbuild_workspace/image_outputs/
+/*_container_log.csv
+/dockerbuild_workspace/deploy_archive_index.tsv

@@ -634,7 +634,7 @@
                             <WrapPanel x:Name="ServiceImageActionPanel" Orientation="Horizontal">
                                 <Button x:Name="ServiceImageCreateButton" Content="新建镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                                 <Button x:Name="ServiceImageDownloadButton" Content="下载镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
-                                <Button x:Name="ServiceImageDeployButton" Content="部署" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                                <Button x:Name="ServiceImageDeployButton" Content="同步镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                                 <Button x:Name="ServiceImagePublishButton" Content="发布" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                                 <Button x:Name="ServiceImageDeleteButton" Content="删除镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                             </WrapPanel>

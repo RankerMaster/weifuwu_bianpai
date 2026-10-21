@@ -36,6 +36,7 @@ namespace WpfApp1
         private string _readLocalIp = string.Empty;
         private string _readTargetUser = "root";
         private string _readTargetIp = "192.168.100.114";
+        private int _readTargetPort = 22;
         private readonly HashSet<string> _readTargetIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _sshPasswordByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastSshErrorByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -765,9 +766,10 @@ namespace WpfApp1
             BeginReadTimingCollection();
             string targetUser;
             string targetIp;
+            int targetPort;
             string targetPassword;
             // 弹出连接参数对话框；用户取消输入时，不创建进度窗口，也不改变当前设备数据。
-            if (!ShowReadDeviceInfoDialog(out targetUser, out targetIp, out targetPassword))
+            if (!ShowReadDeviceInfoDialog(out targetUser, out targetIp, out targetPort, out targetPassword))
             {
                 EndReadTimingCollection();
                 return;
@@ -845,7 +847,7 @@ namespace WpfApp1
 
                     SetProgressText(progressText, text);
                 };
-                setReadProgress(15, "连接设备", string.Format("正在连接 {0}@{1} ", targetUser, targetIp));
+                setReadProgress(15, "连接设备", string.Format("正在连接 {0}@{1}:{2} ", targetUser, targetIp, targetPort));
                 // 只有用户主动关闭进度窗口才视为取消；正常完成时由代码关闭窗口。
                 progressWindow.Closing += (_, __) =>
                 {
@@ -867,9 +869,10 @@ namespace WpfApp1
                 _readLocalIp = GetLocalIpv4();
                 _readTargetUser = targetUser;
                 _readTargetIp = targetIp;
-                targetIdentity = BuildSshTargetIdentity(targetUser, targetIp);
+                _readTargetPort = targetPort;
+                targetIdentity = BuildSshTargetIdentity(targetUser, targetIp, targetPort);
 
-                setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1} ", targetUser, targetIp));
+                setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1}:{2} ", targetUser, targetIp, targetPort));
 
                 var validateOut = string.Empty;
                 var validateErr = string.Empty;
@@ -877,7 +880,7 @@ namespace WpfApp1
                 // 才表示命令确实执行成功，避免仅凭进程退出状态误判密码校验结果。
                 var validateOk = await Task.Run(() => ExecuteSshRemoteCommand(
                     targetUser,
-                    targetIp,
+                    BuildSshHostEndpoint(targetIp, targetPort),
                     targetPassword,
                      "echo __PWD_CHECK_OK__",
                      15000,
@@ -898,7 +901,7 @@ namespace WpfApp1
                     {
                         ShowScrollableErrorDialog(
                             "读取设备信息",
-                            "密码校验失败，请检查用户名/IP/密码。\n\n输出：\n" +
+                            "密码校验失败，请检查用户名/IP/端口/密码。\n\n输出：\n" +
                             (string.IsNullOrWhiteSpace(validateErr) ? (validateOut ?? string.Empty) : validateErr) +
                             "\n\n耗时摘要：\n" + BuildReadTimingSummary());
                     }
@@ -912,8 +915,10 @@ namespace WpfApp1
                 replacedTargetIdentity = _readTargetIps.FirstOrDefault(identity =>
                 {
                     var value = (identity ?? string.Empty).Trim();
-                    var at = value.LastIndexOf('@');
-                    var host = at >= 0 && at < value.Length - 1 ? value.Substring(at + 1).Trim() : string.Empty;
+                    string existingUser;
+                    string host;
+                    int existingPort;
+                    TryParseSshTargetIdentity(value, out existingUser, out host, out existingPort);
                     return string.Equals(value, targetIdentity, StringComparison.OrdinalIgnoreCase) ||
                            string.Equals(host, targetIp, StringComparison.OrdinalIgnoreCase);
                 }) ?? string.Empty;
@@ -967,8 +972,9 @@ namespace WpfApp1
                         ShowScrollableErrorDialog(
                             "读取设备信息",
                             string.Format(
-                                "连接失败：未读取到目标设备 {0} 的 Docker 运行信息。\n\n耗时摘要：\n{1}",
+                                "连接失败：未读取到目标设备 {0}:{1} 的 Docker 运行信息。\n\n耗时摘要：\n{2}",
                                 targetIp,
+                                targetPort,
                                 BuildReadTimingSummary()));
                     }
 
@@ -982,6 +988,10 @@ namespace WpfApp1
                     _sshPasswordByTarget.Remove(replacedTargetIdentity);
                     _preferredSshDockerCandidateIndex.Remove(replacedTargetIdentity);
                     _lastSshErrorByTarget.Remove(replacedTargetIdentity);
+                    lock (_remoteDockerRouteLock)
+                    {
+                        _remoteDockerRoutes.Remove(replacedTargetIdentity);
+                    }
                 }
 
                 // 为已发现设备准备日志文件后，再向用户报告读取成功。
@@ -998,9 +1008,10 @@ namespace WpfApp1
                     MessageBox.Show(
                         this,
                         string.Format(
-                            "连接成功：{0}@{1}\n当前已连接设备目标数：{2}\n\n耗时摘要：\n{3}",
+                            "连接成功：{0}@{1}:{2}\n当前已连接设备目标数：{3}\n\n耗时摘要：\n{4}",
                             targetUser,
                             targetIp,
+                            targetPort,
                             _readTargetIps.Count,
                             timingSummary),
                         "读取设备信息",
@@ -1019,6 +1030,10 @@ namespace WpfApp1
                     _sshPasswordByTarget.Remove(targetIdentity);
                     _preferredSshDockerCandidateIndex.Remove(targetIdentity);
                     _lastSshErrorByTarget.Remove(targetIdentity);
+                    lock (_remoteDockerRouteLock)
+                    {
+                        _remoteDockerRoutes.Remove(targetIdentity);
+                    }
                     if (_readTargetIps.Count == 0)
                     {
                         _hasReadDeviceInfo = false;
@@ -1047,13 +1062,15 @@ namespace WpfApp1
             }
         }
 
-        private bool ShowReadDeviceInfoDialog(out string targetUser, out string targetIp, out string targetPassword)
+        private bool ShowReadDeviceInfoDialog(out string targetUser, out string targetIp, out int targetPort, out string targetPassword)
         {
             targetUser = string.Empty;
             targetIp = string.Empty;
+            targetPort = 22;
             targetPassword = string.Empty;
             var selectedTargetUser = string.Empty;
             var selectedTargetIp = string.Empty;
+            var selectedTargetPort = 22;
             var selectedTargetPassword = string.Empty;
 
             var targetUserBox = new TextBox
@@ -1070,6 +1087,14 @@ namespace WpfApp1
                 Height = 32,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Text = _readTargetIp
+            };
+
+            var targetPortBox = new TextBox
+            {
+                Width = 500,
+                Height = 32,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Text = _readTargetPort.ToString(CultureInfo.InvariantCulture)
             };
 
             var targetPasswordBox = new PasswordBox
@@ -1099,7 +1124,7 @@ namespace WpfApp1
             {
                 Margin = new Thickness(0, 4, 0, 0),
                 Foreground = new SolidColorBrush(Color.FromRgb(71, 85, 105)),
-                Text = "将通过 SSH 远程执行 Docker 命令读取设备信息（用户名 + 目标IP + 密码）。"
+                Text = "将通过 SSH 远程执行 Docker 命令读取设备信息（用户名 + 目标IP + 端口 + 密码）。"
             };
 
             var panel = new Grid { Margin = new Thickness(46, 26, 20, 0) };
@@ -1109,9 +1134,11 @@ namespace WpfApp1
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             AddReadDeviceDialogRow(panel, 0, "SSH 用户名", targetUserBox);
             AddReadDeviceDialogRow(panel, 1, "通信目标IP地址", targetIpBox);
+            AddReadDeviceDialogRow(panel, 2, "SSH 端口", targetPortBox);
             var passwordRow = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
             passwordRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             passwordRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1121,8 +1148,8 @@ namespace WpfApp1
             passwordRow.Children.Add(targetPasswordBox);
             passwordRow.Children.Add(targetPasswordTextBox);
             passwordRow.Children.Add(passwordEyeButton);
-            AddReadDeviceDialogRow(panel, 2, "SSH 密码", passwordRow);
-            Grid.SetRow(tips, 3);
+            AddReadDeviceDialogRow(panel, 3, "SSH 密码", passwordRow);
+            Grid.SetRow(tips, 4);
             Grid.SetColumn(tips, 1);
             panel.Children.Add(tips);
 
@@ -1169,7 +1196,7 @@ namespace WpfApp1
             {
                 Title = "读取设备信息",
                 Width = 820,
-                Height = 320,
+                Height = 370,
                 MinWidth = 760,
                 MinHeight = 300,
                 ResizeMode = ResizeMode.CanResize,
@@ -1195,6 +1222,14 @@ namespace WpfApp1
                     return;
                 }
 
+                int port;
+                if (!int.TryParse((targetPortBox.Text ?? string.Empty).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out port) ||
+                    port < 1 || port > 65535)
+                {
+                    MessageBox.Show("请输入 1 到 65535 之间的有效 SSH 端口号。", "读取设备信息", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
                 var password = targetPasswordTextBox.Visibility == Visibility.Visible
                     ? (targetPasswordTextBox.Text ?? string.Empty)
                     : (targetPasswordBox.Password ?? string.Empty);
@@ -1206,6 +1241,7 @@ namespace WpfApp1
 
                 selectedTargetUser = user;
                 selectedTargetIp = target;
+                selectedTargetPort = port;
                 selectedTargetPassword = password;
                 dialog.DialogResult = true;
             };
@@ -1232,6 +1268,7 @@ namespace WpfApp1
             {
                 targetUser = selectedTargetUser;
                 targetIp = selectedTargetIp;
+                targetPort = selectedTargetPort;
                 targetPassword = selectedTargetPassword;
                 return true;
             }
@@ -2037,7 +2074,7 @@ namespace WpfApp1
                         var parsedHost = (uri.Host ?? string.Empty).Trim();
                         if (!string.IsNullOrWhiteSpace(parsedUser) && !string.IsNullOrWhiteSpace(parsedHost))
                         {
-                            var identity = BuildSshTargetIdentity(parsedUser, parsedHost);
+                            var identity = BuildSshTargetIdentity(parsedUser, parsedHost, ResolveSshPort(uri));
                             if (TryResolveSshTarget(identity, out user, out host, out password))
                             {
                                 return true;
@@ -2066,14 +2103,15 @@ namespace WpfApp1
                         continue;
                     }
 
-                    var at = identity.LastIndexOf('@');
-                    if (at <= 0 || at >= identity.Length - 1)
+                    string parsedUser;
+                    string parsedHost;
+                    int parsedPort;
+                    if (!TryParseSshTargetIdentity(identity, out parsedUser, out parsedHost, out parsedPort))
                     {
                         continue;
                     }
 
-                    var hostPart = identity.Substring(at + 1).Trim();
-                    if (!string.Equals(hostPart, ip, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(parsedHost, ip, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -2100,7 +2138,7 @@ namespace WpfApp1
                 }
             }
 
-            var lastIdentity = BuildSshTargetIdentity(_readTargetUser, _readTargetIp);
+            var lastIdentity = BuildSshTargetIdentity(_readTargetUser, _readTargetIp, _readTargetPort);
             if (TryResolveSshTarget(lastIdentity, out user, out host, out password))
             {
                 return true;
@@ -2149,7 +2187,7 @@ namespace WpfApp1
                     return false;
                 }
 
-                identity = BuildSshTargetIdentity(parsedUser, parsedHost);
+                identity = BuildSshTargetIdentity(parsedUser, parsedHost, ResolveSshPort(uri));
                 return !string.IsNullOrWhiteSpace(identity);
             }
             catch
@@ -3289,42 +3327,101 @@ namespace WpfApp1
             }
 
             var targetUser = string.Empty;
-            var targetHostIp = targetIp;
-            var at = targetIp.IndexOf('@');
-            if (at > 0 && at < targetIp.Length - 1)
+            string targetHostIp;
+            int targetPort;
+            if (!TryParseSshTargetIdentity(targetIp, out targetUser, out targetHostIp, out targetPort) &&
+                !TryParseSshHostEndpoint(targetIp, out targetHostIp, out targetPort))
             {
-                targetUser = targetIp.Substring(0, at).Trim();
-                targetHostIp = targetIp.Substring(at + 1).Trim();
+                return false;
             }
 
-            var resolvedIp = ResolveContextIp(context.DockerHost);
-            if (string.Equals(resolvedIp, targetHostIp, StringComparison.OrdinalIgnoreCase))
+            Uri uri;
+            var dockerHost = (context.DockerHost ?? string.Empty).Trim();
+            if (Uri.TryCreate(dockerHost, UriKind.Absolute, out uri) &&
+                string.Equals(uri.Scheme, "ssh", StringComparison.OrdinalIgnoreCase))
             {
-                if (string.IsNullOrWhiteSpace(targetUser))
-                {
-                    return true;
-                }
-
-                var hostText2 = context.DockerHost ?? string.Empty;
-                var userToken = "ssh://" + targetUser + "@";
-                return hostText2.IndexOf(userToken, StringComparison.OrdinalIgnoreCase) >= 0;
+                var contextUser = Uri.UnescapeDataString(uri.UserInfo ?? string.Empty).Trim();
+                return string.Equals(uri.Host, targetHostIp, StringComparison.OrdinalIgnoreCase) &&
+                       ResolveSshPort(uri) == targetPort &&
+                       (string.IsNullOrWhiteSpace(targetUser) ||
+                        string.Equals(contextUser, targetUser, StringComparison.OrdinalIgnoreCase));
             }
 
-            var hostText = context.DockerHost ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(targetUser))
-            {
-                var targetIdentity = targetUser + "@" + targetHostIp;
-                return hostText.IndexOf(targetIdentity, StringComparison.OrdinalIgnoreCase) >= 0;
-            }
-
-            return hostText.IndexOf(targetHostIp, StringComparison.OrdinalIgnoreCase) >= 0;
+            return false;
         }
 
-        private static string BuildSshTargetIdentity(string user, string ip)
+        private static string BuildSshTargetIdentity(string user, string hostOrEndpoint)
         {
-            var u = (user ?? string.Empty).Trim();
-            var h = (ip ?? string.Empty).Trim();
-            return string.IsNullOrWhiteSpace(u) ? h : (u + "@" + h);
+            string host;
+            int port;
+            if (!TryParseSshHostEndpoint(hostOrEndpoint, out host, out port))
+            {
+                host = (hostOrEndpoint ?? string.Empty).Trim();
+                port = 22;
+            }
+            return BuildSshTargetIdentity(user, host, port);
+        }
+
+        private static string BuildSshTargetIdentity(string user, string host, int port)
+        {
+            var normalizedUser = (user ?? string.Empty).Trim();
+            var endpoint = BuildSshHostEndpoint(host, port);
+            return string.IsNullOrWhiteSpace(normalizedUser) ? endpoint : (normalizedUser + "@" + endpoint);
+        }
+
+        private static string BuildSshHostEndpoint(string host, int port)
+        {
+            var normalizedHost = (host ?? string.Empty).Trim();
+            var normalizedPort = port >= 1 && port <= 65535 ? port : 22;
+            return normalizedPort == 22
+                ? normalizedHost
+                : normalizedHost + ":" + normalizedPort.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryParseSshHostEndpoint(string hostOrEndpoint, out string host, out int port)
+        {
+            host = (hostOrEndpoint ?? string.Empty).Trim();
+            port = 22;
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                return false;
+            }
+
+            var colon = host.LastIndexOf(':');
+            if (colon > 0 && colon < host.Length - 1 && host.IndexOf(':') == colon)
+            {
+                int parsedPort;
+                if (int.TryParse(host.Substring(colon + 1), NumberStyles.None, CultureInfo.InvariantCulture, out parsedPort) &&
+                    parsedPort >= 1 && parsedPort <= 65535)
+                {
+                    host = host.Substring(0, colon).Trim();
+                    port = parsedPort;
+                }
+            }
+
+            return !string.IsNullOrWhiteSpace(host);
+        }
+
+        private static bool TryParseSshTargetIdentity(string targetIdentity, out string user, out string host, out int port)
+        {
+            user = string.Empty;
+            host = string.Empty;
+            port = 22;
+            var identity = (targetIdentity ?? string.Empty).Trim();
+            var at = identity.IndexOf('@');
+            if (at <= 0 || at >= identity.Length - 1)
+            {
+                return false;
+            }
+
+            user = identity.Substring(0, at).Trim();
+            return !string.IsNullOrWhiteSpace(user) &&
+                   TryParseSshHostEndpoint(identity.Substring(at + 1), out host, out port);
+        }
+
+        private static int ResolveSshPort(Uri uri)
+        {
+            return uri != null && uri.Port >= 1 && uri.Port <= 65535 ? uri.Port : 22;
         }
 
         private List<DockerImageInfo> ReadDockerImages(string contextName)
@@ -5099,20 +5196,15 @@ namespace WpfApp1
                 return false;
             }
 
-            var at = identity.IndexOf('@');
-            if (at <= 0 || at >= identity.Length - 1)
+            int port;
+            if (!TryParseSshTargetIdentity(identity, out user, out host, out port))
             {
                 return false;
             }
 
-            user = identity.Substring(0, at).Trim();
-            host = identity.Substring(at + 1).Trim();
-            if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(host))
-            {
-                return false;
-            }
-
-            if (!_sshPasswordByTarget.TryGetValue(identity, out password) || string.IsNullOrWhiteSpace(password))
+            host = BuildSshHostEndpoint(host, port);
+            var normalizedIdentity = BuildSshTargetIdentity(user, host);
+            if (!_sshPasswordByTarget.TryGetValue(normalizedIdentity, out password) || string.IsNullOrWhiteSpace(password))
             {
                 return false;
             }
@@ -5195,7 +5287,15 @@ namespace WpfApp1
             stdOut = string.Empty;
             stdErr = string.Empty;
 
-            var timingContext = BuildSshTargetIdentity(user, host);
+            string sshHost;
+            int sshPort;
+            if (!TryParseSshHostEndpoint(host, out sshHost, out sshPort))
+            {
+                stdErr = "SSH 主机地址无效。";
+                return false;
+            }
+
+            var timingContext = BuildSshTargetIdentity(user, sshHost, sshPort);
             var timingCommand = SanitizeReadTimingCommand(remoteCommandRaw, sshPassword);
             var timingStopwatch = Stopwatch.StartNew();
             var remoteCommand = (remoteCommandRaw ?? string.Empty).Replace("\"", "\\\"");
@@ -5210,9 +5310,10 @@ namespace WpfApp1
             {
                 File.WriteAllText(askPassFile, "@echo off\r\necho " + sshPassword + "\r\n", new System.Text.UTF8Encoding(false));
                 var commonArgs = string.Format(
-                    "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
+                    "-p {0} -o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {1}@{2} \"{3}\"",
+                    sshPort,
                     user,
-                    host,
+                    sshHost,
                     remoteCommand);
 
                 // First try: SSH_ASKPASS mode
@@ -5257,7 +5358,7 @@ namespace WpfApp1
                         if (!process.WaitForExit(timeoutMs))
                         {
                             try { process.Kill(); } catch { }
-                            Debug.WriteLine("SSH remote command timeout: " + user + "@" + host + " | " + timingCommand);
+                            Debug.WriteLine("SSH remote command timeout: " + BuildSshTargetIdentity(user, sshHost, sshPort) + " | " + timingCommand);
                             stdErr = "SSH 执行超时（ASKPASS 模式）。";
                             timingStopwatch.Stop();
                             AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
@@ -5309,9 +5410,10 @@ namespace WpfApp1
                 var fallbackOk = TryExecuteSshWithStdinPassword(
                     sshExecutable,
                     string.Format(
-                        "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
+                        "-p {0} -o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {1}@{2} \"{3}\"",
+                        sshPort,
                         user,
-                        host,
+                        sshHost,
                         remoteCommand),
                     sshPassword,
                     timeoutMs,

@@ -1021,7 +1021,7 @@ namespace WpfApp1
                     deployRows = GetSelectedPreparedImageRowsForDeploy();
                     if (deployRows.Count == 0)
                     {
-                        MessageBox.Show("部署仅支持镜像列表，请先在镜像列表选中至少一行。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                        MessageBox.Show("同步镜像仅支持镜像列表，请先在镜像列表选中至少一行。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
                         return;
                     }
                     break;
@@ -1104,7 +1104,7 @@ namespace WpfApp1
             var content = (button.Content as string ?? string.Empty).Trim();
             if (content == "新建镜像") return ServiceImageAction.Create;
             if (content == "下载镜像") return ServiceImageAction.Download;
-            if (content == "部署") return ServiceImageAction.Deploy;
+            if (content == "部署" || content == "同步镜像") return ServiceImageAction.Deploy;
             if (content == "发布") return ServiceImageAction.Publish;
             if (content == "优化") return ServiceImageAction.Optimize;
             if (content == "删除镜像") return ServiceImageAction.Delete;
@@ -1139,12 +1139,12 @@ namespace WpfApp1
 
             if (ServiceImageCreateButton != null)
             {
-                ServiceImageCreateButton.IsEnabled = true;
+                ServiceImageCreateButton.IsEnabled = enabled;
             }
 
             if (ServiceImageDownloadButton != null)
             {
-                ServiceImageDownloadButton.IsEnabled = true;
+                ServiceImageDownloadButton.IsEnabled = enabled;
             }
 
             if (ServiceImageDeleteButton != null)
@@ -1693,6 +1693,11 @@ namespace WpfApp1
 
         private async Task ExecuteCreateImageFromLocalFilesAsync()
         {
+            await ExecuteCreateImageWizardAsync();
+        }
+
+        private async Task ExecuteLegacyCreateImageFromLocalFilesAsync()
+        {
             var contextDir = GetTempBuildImageDirectory();
             var imageTag = string.Format("local:custom_image_{0}", DateTime.Now.ToString("yyyyMMddHHmmss"));
 
@@ -1895,6 +1900,11 @@ namespace WpfApp1
         }
 
         private async Task ExecuteDeployWithDeviceSelectionAsync(List<ImageComposeRow> imageRows)
+        {
+            await ExecuteOptimizedSingleDeviceDeployAsync(imageRows);
+        }
+
+        private async Task ExecuteLegacyDeployWithDeviceSelectionAsync(List<ImageComposeRow> imageRows)
         {
             string selectedContextName;
             string selectedDeviceName;
@@ -3617,9 +3627,51 @@ namespace WpfApp1
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Content = root
             };
+            EnsureWindowCenteredOnOwner(dialog);
 
             closeButton.Click += (_, __) => dialog.Close();
             dialog.ShowDialog();
+        }
+
+        private void EnsureWindowCenteredOnOwner(Window window)
+        {
+            if (window == null)
+            {
+                return;
+            }
+
+            if (window.Owner == null)
+            {
+                window.Owner = this;
+            }
+
+            // CenterOwner 在模态窗口、最大化主窗口或多显示器 DPI 下可能使用恢复坐标。
+            // 等待布局完成后按 Owner 的实际屏幕位置重新居中。
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            Action centerWindow = () =>
+            {
+                var owner = window.Owner;
+                if (owner == null || !owner.IsVisible)
+                {
+                    return;
+                }
+
+                var ownerTopLeft = owner.PointToScreen(new Point(0, 0));
+                var source = PresentationSource.FromVisual(owner);
+                if (source != null && source.CompositionTarget != null)
+                {
+                    ownerTopLeft = source.CompositionTarget.TransformFromDevice.Transform(ownerTopLeft);
+                }
+
+                var width = window.ActualWidth > 0 ? window.ActualWidth : window.Width;
+                var height = window.ActualHeight > 0 ? window.ActualHeight : window.Height;
+                window.Left = ownerTopLeft.X + (owner.ActualWidth - width) / 2d;
+                window.Top = ownerTopLeft.Y + (owner.ActualHeight - height) / 2d;
+            };
+
+            centerWindow();
+            window.SourceInitialized += (_, __) => centerWindow();
+            window.Loaded += (_, __) => centerWindow();
         }
 
         private static void SetProgressText(TextBlock textBlock, string text)
@@ -4466,6 +4518,14 @@ namespace WpfApp1
                     return false;
                 }
 
+                string scpHost;
+                int sshPort;
+                if (!TryParseSshHostEndpoint(host, out scpHost, out sshPort))
+                {
+                    detail = "SSH 主机地址或端口无效。";
+                    return false;
+                }
+
                 var sshExe = ResolveSshExecutablePath();
                 var scpExe = ResolveScpExecutablePath(sshExe);
                 if (string.IsNullOrWhiteSpace(scpExe))
@@ -4479,10 +4539,11 @@ namespace WpfApp1
                 {
                     File.WriteAllText(askPassFile, "@echo off\r\necho " + password + "\r\n", new UTF8Encoding(false));
                     var args = string.Format(
-                        "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL \"{0}\" {1}@{2}:\"{3}\"",
+                        "-P {0} -o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL \"{1}\" {2}@{3}:\"{4}\"",
+                        sshPort,
                         localPath,
                         user,
-                        host,
+                        scpHost,
                         remotePath);
 
                     var psi = new ProcessStartInfo
