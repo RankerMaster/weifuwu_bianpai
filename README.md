@@ -51,17 +51,17 @@ git lfs pull
 
 ## 协作开发与提交方式
 
-`codex/iamges-container-improve-v1` 作为本次交接和后续合并的基准分支。接手同学应从该分支创建自己的功能分支，在功能分支上修改，通过 Pull Request（PR）审核后合并回基准分支，不直接向基准分支推送修改。
+ <font color="red">`codex/iamges-container-improve-v1` 作为本次交接和后续合并的基准分支。接手同学应从该分支创建自己的功能分支，在功能分支上修改，通过Pull Request（PR）审核后由审核人员合并回基准分支，不直接向基准分支推送修改。</font>
 
 ### 1. 创建自己的功能分支
 
 完成上面的指定分支克隆步骤后，在仓库目录中执行：
 
 ```powershell
-git switch -c codex/strategy-budget-fix
+git switch -c dev/xxx
 ```
 
-`codex/strategy-budget-fix` 仅为示例，请按自己的任务命名；多人开发时使用不同的分支名。创建后，后续修改和提交都在自己的功能分支上进行。
+<font color="red">`xxx` 为接手同学的名字小写，比如张三，就叫dev/zhangsan；创建后，后续修改和提交都在自己的功能分支上进行。</font>
 
 ### 2. 修改、验证并推送功能分支
 
@@ -72,12 +72,12 @@ git status
 git diff
 ```
 
-下面以修改 `WpfApp1/MainWindow.Strategy.cs` 为例，文件路径、提交说明和分支名应替换为本次任务的实际内容：
+下面以修改 `WpfApp1/MainWindow.Strategy.cs` 为例，当前同学的分支为dev/zhangsan，文件路径、提交说明和分支名应替换为本次任务的实际内容：
 
 ```powershell
 git add WpfApp1/MainWindow.Strategy.cs
-git commit -m "fix: correct strategy budget handling"
-git push -u origin codex/strategy-budget-fix
+git commit -m "完成了策略模块的修改，优化了部分逻辑功能"
+git push -u origin dev/zhangsan
 ```
 
 仅提交本次任务涉及的源码和文档，不提交密码、密钥、本地日志、缓存或编译产物。推送到原仓库需要负责人授予写入权限；没有权限时，先联系负责人确认协作方式。
@@ -87,11 +87,11 @@ git push -u origin codex/strategy-budget-fix
 在 GitHub 仓库中创建 Pull Request，确认分支选择为：
 
 - **base（目标分支）**：`codex/iamges-container-improve-v1`。
-- **compare（来源分支）**：自己的功能分支，例如 `codex/strategy-budget-fix`。
+- **compare（来源分支）**：自己的功能分支，例如 `dev/zhangsan`。
 
-PR 中说明修改目的、主要改动、验证结果及未验证内容，由负责人审核后合并。后续新任务从更新后的基准分支另建功能分支。
+PR 中说明修改目的、主要改动、验证结果及未验证内容，**由负责人审核后合并**。后续新任务从更新后的基准分支另建功能分支。
 
-以上是项目约定，不代表 GitHub 已启用强制限制。负责人可在仓库设置中为基准分支配置保护规则，要求通过 PR 合并。
+**以上是项目约定。**
 
 ## 开发与运行环境
 
