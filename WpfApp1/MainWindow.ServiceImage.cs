@@ -25,6 +25,7 @@ namespace WpfApp1
         private string _stickySelectedBaseRepoTag = string.Empty;
         private readonly HashSet<string> _stickySelectedProgramKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _stickySelectedPreparedImageKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _promotedPreparedImageRepoTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         private enum ServiceImageAction
         {
@@ -43,7 +44,14 @@ namespace WpfApp1
             ShowServiceImagePanel();
             SetSidebarSelected("ServiceImage");
             ResetServiceImageActionState();
-            _ = RefreshRuntimeDataBindingsAsync(false, false);
+            RefreshLocalServiceImageLists();
+            BindServiceImageRows(GetSelectedServiceImageDeviceName());
+            BindProgramFileGridWithSelection(
+                ProgramFileGrid,
+                _programFiles
+                    .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList());
+            _ = RefreshRuntimeDataBindingsAsync(false);
         }
 
         private void ShowServiceImagePanel()
@@ -54,14 +62,6 @@ namespace WpfApp1
             ServiceContainerPanel.Visibility = Visibility.Collapsed;
             ServiceImagePanel.Visibility = Visibility.Visible;
 
-            // 不依赖“读取设备信息”，进入页面即优先展示本地基础镜像与程序包目录内容。
-            RefreshLocalServiceImageLists();
-            BindServiceImageRows(GetSelectedServiceImageDeviceName());
-            BindProgramFileGridWithSelection(
-                ProgramFileGrid,
-                _programFiles
-                    .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-                    .ToList());
         }
 
         private void ServiceImageDeviceSelector_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -353,45 +353,6 @@ namespace WpfApp1
             return BuildChineseImageName(repository);
         }
 
-        private void ApplyStoredImageChineseNamesToCurrentRows()
-        {
-            for (var i = 0; i < _allImageRows.Count; i++)
-            {
-                var row = _allImageRows[i];
-                row.ChineseName = ResolveImageChineseName(
-                    row.ContextName,
-                    row.DeviceName,
-                    row.DeviceIp,
-                    row.Repository,
-                    row.Tag,
-                    row.ImageId);
-            }
-
-            for (var i = 0; i < _sourceImages.Count; i++)
-            {
-                var row = _sourceImages[i];
-                row.ChineseName = ResolveImageChineseName(
-                    row.ContextName,
-                    row.DeviceName,
-                    string.Empty,
-                    row.Name,
-                    row.Tag,
-                    row.ImageId);
-            }
-
-            for (var i = 0; i < _preparedImages.Count; i++)
-            {
-                var row = _preparedImages[i];
-                row.ChineseName = ResolveImageChineseName(
-                    row.ContextName,
-                    row.DeviceName,
-                    string.Empty,
-                    row.Name,
-                    row.Tag,
-                    row.ImageId);
-            }
-        }
-
         private void ApplyImageChineseNameToMatchingRows(
             string contextName,
             string deviceName,
@@ -604,6 +565,74 @@ namespace WpfApp1
             catch
             {
                 return string.Empty;
+            }
+        }
+
+        private string GetPromotedPreparedImageStorePath()
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            if (string.IsNullOrWhiteSpace(appData))
+            {
+                return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "service_image_list.store");
+            }
+
+            return Path.Combine(appData, "WpfApp1", "service_image_list.store");
+        }
+
+        private void LoadPromotedPreparedImageStore()
+        {
+            _promotedPreparedImageRepoTags.Clear();
+
+            try
+            {
+                var path = GetPromotedPreparedImageStorePath();
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+
+                var lines = File.ReadAllLines(path, Encoding.UTF8);
+                for (var i = 0; i < lines.Length; i++)
+                {
+                    var parts = lines[i].Split('\t');
+                    if (parts.Length != 2 || parts[0] != "v1")
+                    {
+                        continue;
+                    }
+
+                    var repoTag = NormalizeRepoTag(DecodeImageChineseNameStoreValue(parts[1]));
+                    if (!string.IsNullOrWhiteSpace(repoTag))
+                    {
+                        _promotedPreparedImageRepoTags.Add(repoTag);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Load service image list store failed: " + ex.Message);
+            }
+        }
+
+        private void SavePromotedPreparedImageStore()
+        {
+            try
+            {
+                var lines = _promotedPreparedImageRepoTags
+                    .OrderBy(repoTag => repoTag, StringComparer.OrdinalIgnoreCase)
+                    .Select(repoTag => "v1\t" + EncodeImageChineseNameStoreValue(repoTag))
+                    .ToList();
+                var path = GetPromotedPreparedImageStorePath();
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                File.WriteAllLines(path, lines, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Save service image list store failed: " + ex.Message);
             }
         }
 
@@ -992,7 +1021,7 @@ namespace WpfApp1
                     deployRows = GetSelectedPreparedImageRowsForDeploy();
                     if (deployRows.Count == 0)
                     {
-                        MessageBox.Show("部署仅支持镜像列表，请先在镜像列表选中至少一行。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                        MessageBox.Show("同步镜像仅支持镜像列表，请先在镜像列表选中至少一行。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
                         return;
                     }
                     break;
@@ -1075,7 +1104,7 @@ namespace WpfApp1
             var content = (button.Content as string ?? string.Empty).Trim();
             if (content == "新建镜像") return ServiceImageAction.Create;
             if (content == "下载镜像") return ServiceImageAction.Download;
-            if (content == "部署") return ServiceImageAction.Deploy;
+            if (content == "部署" || content == "同步镜像") return ServiceImageAction.Deploy;
             if (content == "发布") return ServiceImageAction.Publish;
             if (content == "优化") return ServiceImageAction.Optimize;
             if (content == "删除镜像") return ServiceImageAction.Delete;
@@ -1110,12 +1139,12 @@ namespace WpfApp1
 
             if (ServiceImageCreateButton != null)
             {
-                ServiceImageCreateButton.IsEnabled = true;
+                ServiceImageCreateButton.IsEnabled = enabled;
             }
 
             if (ServiceImageDownloadButton != null)
             {
-                ServiceImageDownloadButton.IsEnabled = true;
+                ServiceImageDownloadButton.IsEnabled = enabled;
             }
 
             if (ServiceImageDeleteButton != null)
@@ -1164,6 +1193,11 @@ namespace WpfApp1
             if (string.IsNullOrWhiteSpace(localJsonPath) || !File.Exists(localJsonPath))
             {
                 MessageBox.Show(this, "所选 JSON 文件不存在。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!await ConfirmContainerOperationAsync(contextName, selectedRows))
+            {
                 return;
             }
 
@@ -1268,7 +1302,7 @@ namespace WpfApp1
                     }
 
                     var row = selectedRows[i];
-                    var containerId = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+                    var containerId = row.FullId;
                     if (string.IsNullOrWhiteSpace(containerId))
                     {
                         failed.Add((row.Name ?? "未知容器") + "：容器 ID 为空");
@@ -1659,6 +1693,11 @@ namespace WpfApp1
 
         private async Task ExecuteCreateImageFromLocalFilesAsync()
         {
+            await ExecuteCreateImageWizardAsync();
+        }
+
+        private async Task ExecuteLegacyCreateImageFromLocalFilesAsync()
+        {
             var contextDir = GetTempBuildImageDirectory();
             var imageTag = string.Format("local:custom_image_{0}", DateTime.Now.ToString("yyyyMMddHHmmss"));
 
@@ -1829,7 +1868,7 @@ namespace WpfApp1
                 progressBar.Value = 94;
                 progressStageText.Text = "阶段：刷新界面";
                 SetProgressText(progressText, "正在刷新界面数据...");
-                await RefreshRuntimeDataBindingsAsync(true);
+                RefreshLocalServiceImageLists();
                 ShowServiceImagePanel();
                 SetSidebarSelected("ServiceImage");
                 BindServiceImageRows(GetSelectedServiceImageDeviceName());
@@ -1861,6 +1900,11 @@ namespace WpfApp1
         }
 
         private async Task ExecuteDeployWithDeviceSelectionAsync(List<ImageComposeRow> imageRows)
+        {
+            await ExecuteOptimizedSingleDeviceDeployAsync(imageRows);
+        }
+
+        private async Task ExecuteLegacyDeployWithDeviceSelectionAsync(List<ImageComposeRow> imageRows)
         {
             string selectedContextName;
             string selectedDeviceName;
@@ -2667,8 +2711,14 @@ namespace WpfApp1
                 var rmCmd = string.Format("image rm \"{0}\"", oldRepoTag);
                 await Task.Run(() => TryRunDockerCommand(rmCmd, null, out rmOut, 15000));
 
+                if (_promotedPreparedImageRepoTags.Remove(oldRepoTag))
+                {
+                    _promotedPreparedImageRepoTags.Add(NormalizeRepoTag(newRepoTag));
+                    SavePromotedPreparedImageStore();
+                }
+
                 SetProgressText(progressText, "正在刷新镜像列表...");
-                await RefreshRuntimeDataBindingsAsync(true);
+                RefreshLocalServiceImageLists();
                 ShowServiceImagePanel();
                 BindServiceImageRows(GetSelectedServiceImageDeviceName());
             }
@@ -2687,6 +2737,42 @@ namespace WpfApp1
             }
 
             MessageBox.Show("修改Name成功：\n" + newRepoTag, "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void SourceImageMoveToPreparedMenuItem_OnClick(object sender, RoutedEventArgs e)
+        {
+            var selectedRow = SourceImageGrid == null ? null : SourceImageGrid.SelectedItem as ImageComposeRow;
+            var repoTag = NormalizeRepoTag(selectedRow == null ? string.Empty : selectedRow.RepoTag);
+            if (selectedRow == null || string.IsNullOrWhiteSpace(repoTag))
+            {
+                MessageBox.Show("请先在基础镜像列表选中一行镜像。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _promotedPreparedImageRepoTags.Add(repoTag);
+            SavePromotedPreparedImageStore();
+
+            _sourceImages.RemoveAll(row =>
+                string.Equals(NormalizeRepoTag(row == null ? string.Empty : row.RepoTag), repoTag, StringComparison.OrdinalIgnoreCase));
+            if (!_preparedImages.Any(row =>
+                string.Equals(NormalizeRepoTag(row == null ? string.Empty : row.RepoTag), repoTag, StringComparison.OrdinalIgnoreCase)))
+            {
+                _preparedImages.Add(selectedRow);
+            }
+
+            BindServiceImageRows(GetSelectedServiceImageDeviceName());
+            var movedRow = PreparedImageGrid.Items
+                .Cast<object>()
+                .OfType<ImageComposeRow>()
+                .FirstOrDefault(row => string.Equals(NormalizeRepoTag(row.RepoTag), repoTag, StringComparison.OrdinalIgnoreCase));
+            if (movedRow != null)
+            {
+                PreparedImageGrid.SelectedItem = movedRow;
+                PreparedImageGrid.ScrollIntoView(movedRow);
+                PreparedImageGrid.Focus();
+            }
+
+            MessageBox.Show("已移入镜像列表，可直接进行部署等操作。", "镜像编排", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         private async Task ExecuteDeleteImagesAsync(List<ImageComposeRow> imageRows)
@@ -2714,6 +2800,7 @@ namespace WpfApp1
 
             var successTags = new List<string>();
             var failedTags = new List<string>();
+            var promotedStoreChanged = false;
             for (var i = 0; i < imageRows.Count; i++)
             {
                 var row = imageRows[i];
@@ -2724,7 +2811,9 @@ namespace WpfApp1
 
                 if (await TryDeleteSingleImageAsync(row))
                 {
-                    successTags.Add(NormalizeRepoTag(row.RepoTag));
+                    var repoTag = NormalizeRepoTag(row.RepoTag);
+                    successTags.Add(repoTag);
+                    promotedStoreChanged |= _promotedPreparedImageRepoTags.Remove(repoTag);
                 }
                 else
                 {
@@ -2732,7 +2821,13 @@ namespace WpfApp1
                 }
             }
 
-            await RefreshRuntimeDataBindingsAsync(true);
+            if (promotedStoreChanged)
+            {
+                SavePromotedPreparedImageStore();
+            }
+
+            RefreshLocalServiceImageLists();
+            BindServiceImageRows(GetSelectedServiceImageDeviceName());
 
             if (failedTags.Count == 0)
             {
@@ -3532,9 +3627,51 @@ namespace WpfApp1
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Content = root
             };
+            EnsureWindowCenteredOnOwner(dialog);
 
             closeButton.Click += (_, __) => dialog.Close();
             dialog.ShowDialog();
+        }
+
+        private void EnsureWindowCenteredOnOwner(Window window)
+        {
+            if (window == null)
+            {
+                return;
+            }
+
+            if (window.Owner == null)
+            {
+                window.Owner = this;
+            }
+
+            // CenterOwner 在模态窗口、最大化主窗口或多显示器 DPI 下可能使用恢复坐标。
+            // 等待布局完成后按 Owner 的实际屏幕位置重新居中。
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            Action centerWindow = () =>
+            {
+                var owner = window.Owner;
+                if (owner == null || !owner.IsVisible)
+                {
+                    return;
+                }
+
+                var ownerTopLeft = owner.PointToScreen(new Point(0, 0));
+                var source = PresentationSource.FromVisual(owner);
+                if (source != null && source.CompositionTarget != null)
+                {
+                    ownerTopLeft = source.CompositionTarget.TransformFromDevice.Transform(ownerTopLeft);
+                }
+
+                var width = window.ActualWidth > 0 ? window.ActualWidth : window.Width;
+                var height = window.ActualHeight > 0 ? window.ActualHeight : window.Height;
+                window.Left = ownerTopLeft.X + (owner.ActualWidth - width) / 2d;
+                window.Top = ownerTopLeft.Y + (owner.ActualHeight - height) / 2d;
+            };
+
+            centerWindow();
+            window.SourceInitialized += (_, __) => centerWindow();
+            window.Loaded += (_, __) => centerWindow();
         }
 
         private static void SetProgressText(TextBlock textBlock, string text)
@@ -4381,6 +4518,14 @@ namespace WpfApp1
                     return false;
                 }
 
+                string scpHost;
+                int sshPort;
+                if (!TryParseSshHostEndpoint(host, out scpHost, out sshPort))
+                {
+                    detail = "SSH 主机地址或端口无效。";
+                    return false;
+                }
+
                 var sshExe = ResolveSshExecutablePath();
                 var scpExe = ResolveScpExecutablePath(sshExe);
                 if (string.IsNullOrWhiteSpace(scpExe))
@@ -4394,10 +4539,11 @@ namespace WpfApp1
                 {
                     File.WriteAllText(askPassFile, "@echo off\r\necho " + password + "\r\n", new UTF8Encoding(false));
                     var args = string.Format(
-                        "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL \"{0}\" {1}@{2}:\"{3}\"",
+                        "-P {0} -o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL \"{1}\" {2}@{3}:\"{4}\"",
+                        sshPort,
                         localPath,
                         user,
-                        host,
+                        scpHost,
                         remotePath);
 
                     var psi = new ProcessStartInfo

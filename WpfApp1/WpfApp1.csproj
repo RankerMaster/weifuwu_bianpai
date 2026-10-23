@@ -71,6 +71,8 @@
     </Compile>
     <Compile Include="MainWindow.Awareness.cs" />
     <Compile Include="MainWindow.ServiceImage.cs" />
+    <Compile Include="MainWindow.ImageCreateWizard.cs" />
+    <Compile Include="MainWindow.ImageDeploy.cs" />
     <Compile Include="MainWindow.ServiceContainer.cs" />
     <Compile Include="MainWindow.Strategy.cs" />
     <Compile Include="MainWindow.Navigation.cs" />

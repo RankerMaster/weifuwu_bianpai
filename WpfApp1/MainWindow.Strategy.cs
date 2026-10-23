@@ -231,32 +231,35 @@ namespace WpfApp1
 
             string sshUser;
             string sshIp;
+            int sshPort;
             string parseDetail;
-            if (!TryResolveSshEndpointFromContext(contextName, out sshUser, out sshIp, out parseDetail))
+            if (!TryResolveSshEndpointFromContext(contextName, out sshUser, out sshIp, out sshPort, out parseDetail))
             {
                 detail = parseDetail;
                 return false;
             }
 
             string sshOutput;
-            if (TryReadDiskMaxBySsh(sshIp, sshUser, "df -B1 --output=size / | tail -1", out diskBytes, out sshOutput) && diskBytes > 0)
+            if (TryReadDiskMaxBySsh(sshIp, sshPort, sshUser, "df -B1 --output=size / | tail -1", out diskBytes, out sshOutput) && diskBytes > 0)
             {
                 return true;
             }
 
             detail = string.Format(
-                "已识别 context={0} => {1}@{2}，但 SSH 执行失败。\n输出：\n{3}",
+                "已识别 context={0} => {1}@{2}:{3}，但 SSH 执行失败。\n输出：\n{4}",
                 contextName,
                 sshUser,
                 sshIp,
+                sshPort,
                 string.IsNullOrWhiteSpace(sshOutput) ? "(无输出)" : sshOutput);
             return false;
         }
 
-        private bool TryResolveSshEndpointFromContext(string contextName, out string sshUser, out string sshIp, out string detail)
+        private bool TryResolveSshEndpointFromContext(string contextName, out string sshUser, out string sshIp, out int sshPort, out string detail)
         {
             sshUser = string.Empty;
             sshIp = string.Empty;
+            sshPort = 22;
             detail = string.Empty;
 
             var dockerHost = (ReadDockerHostByContext(contextName) ?? string.Empty).Trim();
@@ -297,16 +300,17 @@ namespace WpfApp1
 
             sshUser = user.Trim();
             sshIp = uri.Host.Trim();
+            sshPort = ResolveSshPort(uri);
             return true;
         }
 
-        private bool TryReadDiskMaxBySsh(string ip, string user, string command, out long diskBytes, out string output)
+        private bool TryReadDiskMaxBySsh(string ip, int port, string user, string command, out long diskBytes, out string output)
         {
             diskBytes = 0;
             output = string.Empty;
             try
             {
-                var sshArgs = string.Format("{0}@{1} \"{2}\"", user, ip, command.Replace("\"", "\\\""));
+                var sshArgs = string.Format("-p {0} {1}@{2} \"{3}\"", port, user, ip, command.Replace("\"", "\\\""));
                 var sshBins = new[]
                 {
                     @"C:\Windows\Sysnative\OpenSSH\ssh.exe",

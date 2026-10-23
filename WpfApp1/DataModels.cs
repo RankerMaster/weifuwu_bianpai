@@ -185,7 +185,8 @@
             string diskReadWrite,
             string detail,
             string fullId = "",
-            string size = "-")
+            string size = "-",
+            string command = "")
         {
             DeviceName = deviceName;
             Id = id;
@@ -202,6 +203,7 @@
             Detail = detail;
             FullId = string.IsNullOrWhiteSpace(fullId) ? id : fullId;
             Size = string.IsNullOrWhiteSpace(size) ? "-" : NormalizeMemoryUnitText(size);
+            Command = string.IsNullOrWhiteSpace(command) ? "-" : command;
         }
 
         public string DeviceName { get; }
@@ -219,6 +221,7 @@
         public string DiskReadWrite { get; }
         public string Detail { get; }
         public string FullId { get; }
+        public string Command { get; }
 
         private static string NormalizeMemoryUnitText(string value)
         {

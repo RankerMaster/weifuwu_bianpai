@@ -155,7 +155,20 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <UniformGrid x:Name="DashboardTopPanel" Grid.Row="0" Columns="3" Margin="0,0,0,12">
+                <!--
+                    设计器静态预览开关（仅修改 d:Visibility，不影响程序运行）：
+                
+                    镜像和容器感知：DashboardTopPanel、DashboardMainPanel = Visible，其余 = Collapsed
+                    容器策略优化：StrategyPanel = Visible，其余 = Collapsed
+                    微服务镜像编排：ServiceImagePanel = Visible，其余 = Collapsed
+                    微服务容器编排：ServiceContainerPanel = Visible，其余 = Collapsed
+                
+                -->
+                <UniformGrid x:Name="DashboardTopPanel"
+                             Grid.Row="0"
+                             Columns="3"
+                             Margin="0,0,0,12"
+                             d:Visibility="Collapsed">
                     <Border Margin="0,0,8,0" CornerRadius="8" Padding="18" MinHeight="190" Background="#3F72D8">
                         <StackPanel>
                             <TextBlock Text="镜像"
@@ -165,14 +178,14 @@
                                        HorizontalAlignment="Left"
                                        TextWrapping="NoWrap"
                                        TextTrimming="None" />
-                            <TextBlock x:Name="ImageCountText" Text="30个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
+                            <TextBlock x:Name="ImageCountText" Text="0个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
                     <Border Margin="8,0" CornerRadius="8" Padding="18" MinHeight="190" Background="#2563D6">
                         <StackPanel>
                             <TextBlock Text="已启动容器" Foreground="White" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock x:Name="ContainerCountText" Text="5个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
+                            <TextBlock x:Name="ContainerCountText" Text="0个" Foreground="White" FontSize="42" FontWeight="Bold" Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
 
@@ -180,7 +193,7 @@
                         <StackPanel>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="已启动的设备：" FontSize="17" FontWeight="SemiBold" Foreground="#1F2937" VerticalAlignment="Center" />
-                                <TextBlock x:Name="RunningDeviceCountText" Text="3个" FontSize="20" FontWeight="Bold" Foreground="#2563EB" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="RunningDeviceCountText" Text="0个" FontSize="20" FontWeight="Bold" Foreground="#2563EB" Margin="6,0,0,0" VerticalAlignment="Center" />
                             </StackPanel>
                             <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" Height="134">
                                 <StackPanel x:Name="DevicePreviewPanel" />
@@ -195,7 +208,8 @@
                         CornerRadius="8"
                         BorderBrush="#DFE5EE"
                         BorderThickness="1"
-                        Padding="16">
+                        Padding="16"
+                        d:Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -388,7 +402,8 @@
                         BorderBrush="#D1D5DB"
                         BorderThickness="1"
                         Padding="16"
-                        Visibility="Collapsed">
+                        Visibility="Collapsed"
+                        d:Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -572,7 +587,8 @@
                         BorderThickness="1"
                         Padding="14"
                         MinHeight="760"
-                        Visibility="Collapsed">
+                        Visibility="Collapsed"
+                        d:Visibility="Collapsed">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -618,7 +634,7 @@
                             <WrapPanel x:Name="ServiceImageActionPanel" Orientation="Horizontal">
                                 <Button x:Name="ServiceImageCreateButton" Content="新建镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                                 <Button x:Name="ServiceImageDownloadButton" Content="下载镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
-                                <Button x:Name="ServiceImageDeployButton" Content="部署" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
+                                <Button x:Name="ServiceImageDeployButton" Content="同步镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                                 <Button x:Name="ServiceImagePublishButton" Content="发布" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                                 <Button x:Name="ServiceImageDeleteButton" Content="删除镜像" Style="{StaticResource ContainerActionButtonStyle}" Click="ServiceImageActionButton_OnClick" />
                             </WrapPanel>
@@ -663,6 +679,16 @@
                                       RowBackground="#FFFFFF"
                                       AlternatingRowBackground="#F8FAFC"
                                       BorderThickness="0">
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                                <EventSetter Event="PreviewMouseRightButtonDown" Handler="DeviceImageGridRow_OnPreviewMouseRightButtonDown" />
+                                            </Style>
+                                        </DataGrid.RowStyle>
+                                        <DataGrid.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="移入镜像列表" Click="SourceImageMoveToPreparedMenuItem_OnClick" />
+                                            </ContextMenu>
+                                        </DataGrid.ContextMenu>
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="中文名" Width="*" Binding="{Binding ChineseName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
                                             <DataGridTextColumn Header="Name" Width="*" Binding="{Binding Name}" IsReadOnly="True" />
@@ -770,7 +796,8 @@
                         BorderThickness="1"
                         Padding="14"
                         MinHeight="760"
-                        Visibility="Collapsed">
+                        Visibility="Collapsed"
+                        d:Visibility="Visible">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -813,15 +840,30 @@
                                 BorderThickness="1"
                                 CornerRadius="8"
                                 Padding="14,8">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="容器列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="支持多选与批量操作" Margin="10,0,0,0" FontSize="13" Foreground="#5D6E86" VerticalAlignment="Center" />
-                            </Grid>
+                             <Grid>
+                                 <Grid.ColumnDefinitions>
+                                     <ColumnDefinition Width="Auto" />
+                                     <ColumnDefinition Width="Auto" />
+                                     <ColumnDefinition Width="*" />
+                                     <ColumnDefinition Width="Auto" />
+                                 </Grid.ColumnDefinitions>
+                                 <TextBlock Grid.Column="0" Text="容器列表" FontSize="16" FontWeight="SemiBold" Foreground="#22324D" VerticalAlignment="Center" />
+                                 <TextBlock Grid.Column="1" Text="支持多选与批量操作" Margin="10,0,0,0" FontSize="13" Foreground="#5D6E86" VerticalAlignment="Center" />
+                                 <TextBlock x:Name="ContainerRefreshStatusText"
+                                            Grid.Column="2"
+                                            Margin="16,0,8,0"
+                                            Text="缓存数据，等待验证设备"
+                                            FontSize="13"
+                                            Foreground="#B45309"
+                                            TextAlignment="Right"
+                                            VerticalAlignment="Center" />
+                                 <Button x:Name="ContainerRetryButton"
+                                         Grid.Column="3"
+                                         Content="重试"
+                                         Padding="12,3"
+                                         Visibility="Collapsed"
+                                         Click="ContainerRetryButton_OnClick" />
+                             </Grid>
                         </Border>
 
                         <Border Grid.Row="4"
@@ -893,6 +935,15 @@
                                     <DataGridTextColumn Header="名称" Width="170" Binding="{Binding ChineseName}" />
                                     <DataGridTextColumn Header="镜像" Width="220" Binding="{Binding Image}" />
                                     <DataGridTextColumn Header="状态" Width="120" Binding="{Binding Status}" />
+                                    <DataGridTextColumn Header="COMMAND" Width="260" Binding="{Binding Command}">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="TextWrapping" Value="NoWrap" />
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                <Setter Property="ToolTip" Value="{Binding Command}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
                                     <DataGridTextColumn Header="CPU核数量" Width="180" Binding="{Binding CpuCores}">
                                         <DataGridTextColumn.ElementStyle>
                                             <Style TargetType="TextBlock">
@@ -902,10 +953,10 @@
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
                                     <DataGridTextColumn Header="CPU (%)" Width="90" Binding="{Binding CpuPercent}" />
+                                    <DataGridTextColumn Header="MEM USAGE / LIMIT" Width="170" Binding="{Binding MemoryUsage}" />
                                     <DataGridTextColumn Header="Memory (%)" Width="95" Binding="{Binding MemoryPercent}" />
                                     <DataGridTextColumn Header="Disk read/write" Width="150" Binding="{Binding DiskReadWrite}" />
                                     <DataGridTextColumn Header="Port(s)" Width="130" Binding="{Binding Ports}" />
-                                    <DataGridTextColumn Header="Size" Width="160" Binding="{Binding Size}" />
                                     <DataGridTextColumn Header="详情" Width="260" Binding="{Binding Detail}" />
                                     <DataGridTextColumn Header="ID" Width="330" Binding="{Binding Id}" />
                                 </DataGrid.Columns>

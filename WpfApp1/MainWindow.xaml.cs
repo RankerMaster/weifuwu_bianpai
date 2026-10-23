@@ -11,6 +11,7 @@ using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Text;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -33,135 +34,83 @@ namespace WpfApp1
         private string _lastOperatedContextName = string.Empty;
         private readonly List<ContainerOperationLog> _containerOperationLogs = new List<ContainerOperationLog>();
         private string _readLocalIp = string.Empty;
-        private string _readTargetUser = string.Empty;
-        private string _readTargetIp = string.Empty;
+        private string _readTargetUser = "root";
+        private string _readTargetIp = "192.168.100.114";
+        private int _readTargetPort = 22;
         private readonly HashSet<string> _readTargetIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _sshPasswordByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastSshErrorByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _preferredSshDockerCandidateIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private Window _containerLoadingWindow;
         private bool _hasReadDeviceInfo;
-        private bool _isContainerActionRunning;
-        private readonly DispatcherTimer _autoRefreshTimer;
         private const string SshContextPrefix = "SSH:";
+        private const string DashboardAllDevicesSelectionKey = "__DASHBOARD_ALL_DEVICES__";
         private readonly Dictionary<string, SortDescription> _gridSortStates = new Dictionary<string, SortDescription>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _hostCpuLimitTextByContext = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, int> _hostMemoryLimitMbByContext = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> _containerSizeBackfillRunningContexts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private bool _suppressContainerDeviceSelectionRefresh;
         private bool _isCollectingReadTimings;
         private readonly object _readTimingLock = new object();
         private readonly List<ReadTimingRecord> _readTimingRecords = new List<ReadTimingRecord>();
+        private Stopwatch _readWallClock;
         private readonly Dictionary<string, string> _imageChineseNameByImageId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _imageChineseNameByRepoTag = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        private readonly List<DeviceInfo> _devices = new List<DeviceInfo>
-        {
-            new DeviceInfo("设备1", "192.168.0.38", 2.53, 65.00, 90.44, 30, 5),
-            new DeviceInfo("设备2", "192.168.0.40", 12.70, 44.12, 58.30, 21, 3),
-            new DeviceInfo("设备3", "192.168.0.46", 33.18, 25.37, 41.06, 17, 2),
-            new DeviceInfo("设备4", "192.168.0.52", 7.40, 72.50, 20.10, 28, 4)
-        };
+        private readonly List<DeviceInfo> _devices = new List<DeviceInfo>();
 
-        private readonly List<DeviceImageRow> _allImageRows = new List<DeviceImageRow>
-        {
-            new DeviceImageRow("192.168.0.38", "yunyoujun/cook", "latest", "2025-01-24 11:41:38", "41.93MB", "maintainer=NGINX", "01e4c695535c1bdf2aaeabfd124b31...", "云友厨房镜像"),
-            new DeviceImageRow("192.168.0.38", "lovasoa/sqlpage", "latest", "2025-03-23 07:08:54", "25.97MB", "org.opencontainers.image.created=2025-03-22", "03cea01526bd8919fe06711c6de3f9...", "SQL 页面镜像"),
-            new DeviceImageRow("192.168.0.38", "minio/minio", "latest", "2024-10-03 05:38:53", "157.60MB", "architecture=x86_64", "162489e21d268e1d54066abf0e5e0...", "对象存储镜像"),
-            new DeviceImageRow("192.168.0.38", "amir20/dozzle", "latest", "2025-06-17 00:25:23", "54.51MB", "org.opencontainers.image.created=2025-06-16", "1e8d952886d1a98a6b512d4ba2a1...", "日志查看镜像"),
-            new DeviceImageRow("192.168.0.40", "mysql", "5.7.6", "2015-03-31 04:15:40", "344.18MB", "", "2a2a35106ec50fcf259525be5302bd...", "MySQL 数据库"),
-            new DeviceImageRow("192.168.0.40", "ghcr.io/coleifer/sqlite-web", "latest", "2025-03-27 21:23:02", "125.43MB", "", "4b498e295525a9c71113d5c35754c...", "SQLite 管理页"),
-            new DeviceImageRow("192.168.0.40", "esperotech/yaade", "latest", "2025-04-02 17:18:05", "560.76MB", "", "5314a390e9f6f65bb3b739813f7784...", "API 调试平台"),
-            new DeviceImageRow("192.168.0.46", "cars10/elasticsearch", "latest", "2024-12-22 18:08:08", "58.89MB", "maintainer=NGINX", "5603de0f9483bd234f6677e722bab...", "搜索引擎镜像"),
-            new DeviceImageRow("192.168.0.46", "netdata/netdata", "latest", "2025-06-02 10:32:11", "681.27MB", "org.opencontainers.image.authors=Netdatabot", "569338efdcba57155762201daa4e...", "监控面板镜像"),
-            new DeviceImageRow("192.168.0.46", "postgres", "12", "2022-01-04 09:20:14", "353.55MB", "", "58bff76313464ab65dcb0b9a2b910...", "PostgreSQL 数据库"),
-            new DeviceImageRow("192.168.0.52", "chaozhu/easynode", "latest", "2024-10-17 23:57:37", "163.46MB", "", "5d731f4c94c3ce77c0f3416c69af1c0...", "节点管理镜像"),
-            new DeviceImageRow("192.168.0.52", "swr.ap-southeast-1.myhuaweicloud", "latest", "2025-04-19 07:07:14", "189.58MB", "", "60513adac99894bd3aa4a1b31e568...", "华为云仓库镜像"),
-            new DeviceImageRow("192.168.0.52", "wenyang0/codecv", "latest", "2023-08-17 15:48:50", "58.57MB", "", "747df3bcf031b14a8ce8de38b852e...", "代码转换镜像")
-        };
-        private readonly List<DeployImageCard> _strategyImages = new List<DeployImageCard>
-        {
-            new DeployImageCard("custom_image_20251217144522:l", "7a348006a69e", "2025-12-17 14:45", "815 MB"),
-            new DeployImageCard("custom_image_20251214103810:l", "9d94db52a229", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("custom_image_20251214104824:l", "77a8edbe31b3", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("custom_image_20251211085233:l", "f84aa5fb4d18", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("custom_image_20251214104635:l", "9435c3e71c25", "2025-12-11 08:52", "1332 MB"),
-            new DeployImageCard("temp1:ubuntu20.04", "5c5d8a2ebde6", "2025-12-10 16:58", "774 MB"),
-            new DeployImageCard("test1:latest", "7d4a5c5db7fa", "2025-12-10 11:27", "1332 MB"),
-            new DeployImageCard("custom_image_20251211105919:l", "2f73b3909192", "2025-12-10 11:27", "1332 MB"),
-            new DeployImageCard("temp2:ubuntu20.04", "edd7288ecb96", "2025-12-10 11:22", "774 MB"),
-            new DeployImageCard("dslim/slim:latest", "27859c6a5666", "2025-12-09 09:18", "612 MB")
-        };
-        private readonly List<ImageComposeRow> _sourceImages = new List<ImageComposeRow>
-        {
-            new ImageComposeRow("temp1:ubuntu20.04", "5c5d8a2ebde6", "2025-12-10 16:58", "774.9", "设备1"),
-            new ImageComposeRow("test1:latest", "7d4a5c5db7fa", "2025-12-10 11:27", "1332.2", "设备2"),
-            new ImageComposeRow("temp2:ubuntu20.04", "edd7288ecb96", "2025-12-10 11:22", "774.5", "设备3"),
-            new ImageComposeRow("dslim/slim:latest", "27859c6a5666", "2024-02-02 23:19", "72.1", "设备4")
-        };
-        private readonly List<ImageComposeRow> _preparedImages = new List<ImageComposeRow>
-        {
-            new ImageComposeRow("custom_image_20251217144522:l", "7a348006a69e", "2025-12-17 14:45", "815.9", "设备1"),
-            new ImageComposeRow("custom_image_20251214104635:l", "9435c3e71c25", "2025-12-11 08:52", "1332.6", "设备2"),
-            new ImageComposeRow("custom_image_20251214103810:l", "9d94db52a229", "2025-12-11 08:52", "1332.6", "设备2"),
-            new ImageComposeRow("custom_image_20251214104824:l", "77a8ed8e31b3", "2025-12-11 08:52", "1332.6", "设备3"),
-            new ImageComposeRow("custom_image_20251211085233:l", "f84aa5fb4d18", "2025-12-11 08:52", "1332.6", "设备4"),
-            new ImageComposeRow("custom_image_20251211105919:l", "2f33b9901992", "2025-12-10 11:27", "1332.2", "设备1")
-        };
-        private readonly List<ProgramFileRow> _programFiles = new List<ProgramFileRow>
-        {
-            new ProgramFileRow("Cass-Lib-20250717.tgz", "102.38 MB", "2025-09-11 17:23"),
-            new ProgramFileRow("VTTD-ABox300-Fuler-v2.4.0.tgz", "9.15 MB", "2025-09-11 17:21")
-        };
-        private readonly List<ContainerComposeRow> _containerRows = new List<ContainerComposeRow>
-        {
-            new ContainerComposeRow("设备1", "13d61d8cb2a045289d5bedbba1", "/angry_bose", "愤怒玻色容器", "myimage:latest", "exited", "8080:80", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (127) 6 days ago", "", "不限"),
-            new ContainerComposeRow("设备1", "916683c34a897d8051cabdb046", "/mysql-test", "MySQL 测试容器", "mysql:8.0", "exited", "3306:3306", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (0) 6 days ago", "", "不限"),
-            new ContainerComposeRow("设备1", "6f93c32cedb39dd3846b98ee73", "/mystifying_karaman", "神秘卡拉曼容器", "custom_image_20251211...", "exited", "-", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (0) 3 months ago", "", "不限"),
-            new ContainerComposeRow("设备2", "1ef87c52f83785f9f7e045b97f", "/ftp_test", "FTP 测试容器", "test", "running", "21:21", "0.2%", "7MB / 1GB", "0.7%", "0B / 0B", "Up 4 hours", "", "1.00"),
-            new ContainerComposeRow("设备2", "67dde210fc302db6e0b4eb75", "/silly_joliot", "Joliot 实验容器", "cass-image:latest", "running", "-", "0.1%", "5MB / 1GB", "0.5%", "0B / 0B", "Up 2 days", "", "1.00"),
-            new ContainerComposeRow("设备3", "13a3cf9d25a5e3b4438d2d826b", "/laughing_albatta...", "信天翁演示容器", "myimge", "exited", "-", "0%", "0B / 0B", "0%", "0B / 0B", "Exited (0) 4 months ago", "", "不限"),
-            new ContainerComposeRow("设备3", "1fd3f22a10ab4f5aa1b0cce901", "/redis-main", "Redis 缓存容器", "redis:7", "running", "6379:6379", "0.4%", "9MB / 1GB", "0.9%", "0B / 0B", "Up 9 days", "", "1.00"),
-            new ContainerComposeRow("设备4", "8a8f9c3bd01941ca9d1e26ac44", "/nginx-proxy", "Nginx 代理容器", "nginx:latest", "running", "80:80", "0.3%", "8MB / 1GB", "0.8%", "0B / 0B", "Up 15 days", "", "1.00"),
-            new ContainerComposeRow("设备4", "91ab73fa0d614fea8dfebd9c6d", "/api-gateway", "网关容器", "gateway:v2", "paused", "-", "0%", "0B / 0B", "0%", "0B / 0B", "Paused 3 hours", "", "不限")
-        };
+        // 汇总从各设备读取到的 Docker 镜像信息，作为设备镜像列表的数据源。
+        private readonly List<DeviceImageRow> _allImageRows = new List<DeviceImageRow>();
 
+        // 保存策略页面使用的镜像卡片数据，包含镜像仓库标签、ID、创建时间和大小。
+        private readonly List<DeployImageCard> _strategyImages = new List<DeployImageCard>();
+
+        // 保存镜像编排流程中的源镜像，即可作为后续制作或组合基础的镜像。
+        private readonly List<ImageComposeRow> _sourceImages = new List<ImageComposeRow>();
+
+        // 保存已经完成制作、可供后续部署使用的预部署镜像。
+        private readonly List<ImageComposeRow> _preparedImages = new List<ImageComposeRow>();
+
+        // 保存镜像制作或容器编排时可选择的程序包文件及其文件信息。
+        private readonly List<ProgramFileRow> _programFiles = new List<ProgramFileRow>();
+
+        // 保存从设备读取到的容器运行记录，供容器列表展示和操作使用。
+        private readonly List<ContainerComposeRow> _containerRows = new List<ContainerComposeRow>();
+
+        /// <summary>
+        /// 创建主窗口并完成本地初始化：加载 XAML 控件、恢复镜像中文名称、
+        /// 重置运行时界面，并注册窗口加载和关闭事件。
+        /// 构造阶段不会连接远程设备，设备数据由用户执行“读取设备信息”后获取。
+        /// </summary>
         public MainWindow()
         {
+            // 创建 XAML 中声明的控件并初始化字段引用。后续初始化代码依赖这些控件，
+            // 因此 InitializeComponent 必须在所有界面访问操作之前执行。
             InitializeComponent();
+
+            // 从持久化文件读取“镜像 ID/仓库标签 -> 中文名称”的映射，
+            // 再为各 DataGrid 注册统一的列排序逻辑。
             LoadImageChineseNameStore();
-            ApplyStoredImageChineseNamesToCurrentRows();
+            LoadPromotedPreparedImageStore();
             RegisterGridSortingBehavior();
+
+            // 删除上次运行生成的设备容器 CSV 日志，避免旧日志混入本次会话。
             CleanupContainerLogCsvFiles();
+
+            // 清空设备、镜像、容器和策略等运行时集合，同时重置仪表盘指标、
+            // 设备选择器及各列表的数据源，使界面以“尚未读取设备”的状态启动。
             ClearRuntimeDataForColdStart();
-            _autoRefreshTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(1500)
-            };
-            _autoRefreshTimer.Tick += async (_, __) =>
-            {
-                if (_isRefreshing)
-                {
-                    return;
-                }
 
-                if (StrategyPanel != null && StrategyPanel.Visibility == Visibility.Visible)
-                {
-                    return;
-                }
-
-                await RefreshRuntimeDataBindingsAsync(false);
-            };
-            // 感知页改为手动刷新。
-            _autoRefreshTimer.Stop();
-
+            // 等窗口及其控件全部加载完成后，将当前运行时集合绑定到界面，
+            // 并把侧边栏默认切换到“感知”页面，同时应用对应的选中样式。
             Loaded += (_, __) =>
             {
                 ApplyRuntimeDataBindings(string.Empty, string.Empty, string.Empty);
                 SetSidebarSelected("Awareness");
             };
+
+            // 窗口关闭时删除本次运行生成的设备容器 CSV 日志，避免留下临时数据。
             Closed += (_, __) => CleanupContainerLogCsvFiles();
-            StrategyImageItemsControl.ItemsSource = null;
+
         }
 
         private void RegisterGridSortingBehavior()
@@ -497,58 +446,115 @@ namespace WpfApp1
             ServiceImageDeviceSelector.SelectedIndex = 0;
         }
 
+        /// <summary>
+        /// 刷新设备、镜像和资源数据，并重新绑定相关界面控件。
+        /// 此重载使用轻量容器汇总模式，不主动读取容器明细，适用于普通或定时刷新。
+        /// </summary>
+        /// <param name="force">
+        /// 为 <see langword="true"/> 时忽略一秒内的快照缓存并重新读取；
+        /// 为 <see langword="false"/> 时允许直接复用最近一次成功读取的数据。
+        /// </param>
         private async Task RefreshRuntimeDataBindingsAsync(bool force)
         {
-            await RefreshRuntimeDataBindingsAsync(force, false);
+            // 普通刷新只查询运行中容器的汇总指标，现有容器明细由 ApplyDockerSnapshot 保留。
+            await RefreshRuntimeDataBindingsAsync(force, ContainerReadMode.LightweightSummary);
         }
 
-        private async Task RefreshRuntimeDataBindingsAsync(bool force, bool includeContainerData)
+        private async Task RefreshRuntimeDataBindingsAsync(bool force, ContainerReadMode containerReadMode)
         {
+            await RefreshRuntimeDataBindingsAsync(
+                force,
+                containerReadMode,
+                _readTargetIps.ToList(),
+                SnapshotApplyMode.ReplaceAll);
+        }
+
+        /// <summary>
+        /// 从当前已登记的 SSH 目标读取 Docker 运行时快照，将成功读取的数据写入内存集合，
+        /// 然后重新绑定仪表盘、服务镜像和容器页面，同时尽量保留用户当前选择的设备。
+        /// </summary>
+        /// <param name="force">是否强制绕过一秒快照缓存；该参数不会绕过正在执行的刷新任务。</param>
+        /// <param name="containerReadMode">
+        /// 容器数据读取模式：轻量模式只读取运行中容器汇总，完整模式读取并替换容器明细。
+        /// </param>
+        private async Task<bool> RefreshRuntimeDataBindingsAsync(
+            bool force,
+            ContainerReadMode containerReadMode,
+            IEnumerable<string> targetIdentities,
+            SnapshotApplyMode applyMode)
+        {
+            // 数据源重新绑定会重建设备选择器，因此刷新前先记录三个页面当前选中的设备名称。
             var selectedContainerDevice = GetSelectedContainerDeviceName();
-            var selectedDashboardDevice = GetSelectedDashboardDeviceName();
+            var selectedDashboardDevice = IsAllDashboardDevicesSelected()
+                ? DashboardAllDevicesSelectionKey
+                : GetSelectedDashboardDeviceName();
             var selectedServiceImageDevice = GetSelectedServiceImageDeviceName();
 
             if (!_hasReadDeviceInfo)
             {
+                // 尚未成功读取过设备时，不执行 Docker/SSH 命令；恢复冷启动数据并刷新空白界面。
                 ClearRuntimeDataForColdStart();
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
-                return;
+                return false;
             }
 
-            if (!force && _devices.Count > 0 && DateTime.Now - _lastSnapshotAt < TimeSpan.FromSeconds(1))
+            if (applyMode == SnapshotApplyMode.ReplaceAll &&
+                !force &&
+                _devices.Count > 0 &&
+                DateTime.Now - _lastSnapshotAt < TimeSpan.FromSeconds(1))
             {
+                // 最近一秒内已有有效快照时只重新绑定界面，避免短时间内重复访问远程设备。
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
-                return;
+                return true;
             }
 
             if (_isRefreshing)
             {
-                return;
+                // 同一时刻只允许一个读取任务执行，防止多个快照并发覆盖共享集合。
+                return false;
+            }
+
+            var targets = (targetIdentities ?? Enumerable.Empty<string>())
+                .Select(target => (target ?? string.Empty).Trim())
+                .Where(target => !string.IsNullOrWhiteSpace(target))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (targets.Count == 0)
+            {
+                return false;
             }
 
             _isRefreshing = true;
             try
             {
+                // Docker/SSH 查询属于阻塞操作，放到线程池执行，避免阻塞 WPF UI 线程。
+                // 读取失败时返回 null，此时保留现有内存数据，仅继续执行界面绑定。
                 var snapshot = await Task.Run(() =>
                 {
                     DockerRuntimeSnapshot localSnapshot;
-                    return TryReadDockerSnapshot(out localSnapshot, _readLocalIp, _readTargetIps, includeContainerData) ? localSnapshot : null;
+                    return TryReadDockerSnapshot(out localSnapshot, _readLocalIp, targets, containerReadMode) ? localSnapshot : null;
                 });
 
                 if (snapshot != null)
                 {
-                    ApplyDockerSnapshot(snapshot);
+                    // 只有获得完整快照后才替换内存数据并更新时间戳，失败结果不会污染缓存时间。
+                    ApplyDockerSnapshot(snapshot, applyMode);
                     _lastSnapshotAt = DateTime.Now;
                 }
 
+                // 使用刷新前保存的设备名称恢复各页面选择，并更新所有关联的数据源和统计信息。
                 ApplyRuntimeDataBindings(selectedDashboardDevice, selectedContainerDevice, selectedServiceImageDevice);
+                return snapshot != null;
             }
             catch (Exception ex)
             {
+                // 后台刷新失败不打断界面操作；保留原有数据，并将错误写入调试输出供排查。
                 Debug.WriteLine("Refresh runtime data failed: " + ex.Message);
+                return false;
             }
             finally
             {
+                // 无论读取成功、返回空快照还是发生异常，都必须释放刷新占用标记。
                 _isRefreshing = false;
             }
         }
@@ -605,7 +611,6 @@ namespace WpfApp1
                 ServiceImageDeviceSelector.SelectedIndex = 0;
             }
 
-            RefreshLocalServiceImageLists();
             BindServiceImageRows(GetSelectedServiceImageDeviceName());
 
             BindProgramFileGridWithSelection(
@@ -703,6 +708,12 @@ namespace WpfApp1
             }
 
             RunningDeviceCountText.Text = string.Format("{0}个", runningDevices.Count);
+            if (string.Equals(preferredDeviceName, DashboardAllDevicesSelectionKey, StringComparison.Ordinal))
+            {
+                DeviceSelector.SelectedIndex = 0;
+                return;
+            }
+
             if (!string.IsNullOrWhiteSpace(preferredDeviceName))
             {
                 for (var i = 0; i < DeviceSelector.Items.Count; i++)
@@ -738,44 +749,66 @@ namespace WpfApp1
             return tag == null ? string.Empty : tag.Name;
         }
 
+        private bool IsAllDashboardDevicesSelected()
+        {
+            var selected = DeviceSelector.SelectedItem as ComboBoxItem;
+            return selected != null && string.Equals(selected.Tag as string, "ALL", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 响应“读取设备信息”按钮：收集 SSH 登录信息、校验连接凭据、读取目标设备的
+        /// Docker 镜像及资源数据，并刷新界面。读取失败或被用户取消时会回滚本次连接状态。
+        /// </summary>
+        /// <param name="sender">触发事件的“读取设备信息”按钮。</param>
+        /// <param name="e">按钮单击事件参数。</param>
         private async void ReadDeviceInfoButton_OnClick(object sender, RoutedEventArgs e)
         {
+            BeginReadTimingCollection();
             string targetUser;
             string targetIp;
+            int targetPort;
             string targetPassword;
-            if (!ShowReadDeviceInfoDialog(out targetUser, out targetIp, out targetPassword))
+            // 弹出连接参数对话框；用户取消输入时，不创建进度窗口，也不改变当前设备数据。
+            if (!ShowReadDeviceInfoDialog(out targetUser, out targetIp, out targetPort, out targetPassword))
             {
+                EndReadTimingCollection();
                 return;
             }
 
-            Window progressWindow = null;
-            TextBlock progressText = null;
-            TextBlock progressStageText = null;
-            ProgressBar progressBar = null;
-            var operationCanceled = false;
-            var progressClosedByCode = false;
-            var targetIdentity = string.Empty;
+            TextBlock progressStageText = null;     // 显示当前所处的读取阶段。
+            ProgressBar progressBar = null;         // 显示整体读取进度。
+            TextBlock progressText = null;          // 显示当前操作的详细提示。
+            Window progressWindow = null;           // 显示读取过程的进度窗口。
+
+            var operationCanceled = false;          // 标记用户是否主动取消了读取操作。
+            var progressClosedByCode = false;       // 区分代码关闭窗口与用户手动关闭窗口。
+            var targetIdentity = string.Empty;      // 保存由 SSH 用户名和目标 IP 组成的目标标识。
+            var targetRegisteredThisAttempt = false;
+            var replacedTargetIdentity = string.Empty;
+            var exactTargetIdentityExisted = false;
+            var hadPreviousTargetPassword = false;
+            var previousTargetPassword = string.Empty;
+
+
             try
             {
+                // 进度窗口由代码动态创建，用于展示连接、校验和数据拉取阶段。
                 progressStageText = new TextBlock
                 {
                     FontSize = 14,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = new SolidColorBrush(Color.FromRgb(36, 64, 98)),
-                    Margin = new Thickness(0, 0, 0, 8),
-                    Text = "阶段：准备中..."
+                    Margin = new Thickness(0, 0, 0, 8)
                 };
                 progressBar = new ProgressBar
                 {
                     Minimum = 0,
                     Maximum = 100,
                     Height = 16,
-                    Margin = new Thickness(0, 0, 0, 10),
-                    Value = 0
+                    Margin = new Thickness(0, 0, 0, 10)
                 };
                 progressText = new TextBlock
                 {
-                    Text = "正在准备连接...",
                     FontSize = 14,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = new SolidColorBrush(Color.FromRgb(42, 53, 68))
@@ -797,6 +830,9 @@ namespace WpfApp1
                     Owner = this,
                     Content = panel
                 };
+
+
+                // 统一更新进度条、阶段标题和详细提示，并把百分比限制在有效范围内。
                 Action<double, string, string> setReadProgress = (percent, stage, text) =>
                 {
                     if (progressBar != null)
@@ -811,7 +847,8 @@ namespace WpfApp1
 
                     SetProgressText(progressText, text);
                 };
-                setReadProgress(12, "连接设备", string.Format("正在连接 {0}@{1} ...", targetUser, targetIp));
+                setReadProgress(15, "连接设备", string.Format("正在连接 {0}@{1}:{2} ", targetUser, targetIp, targetPort));
+                // 只有用户主动关闭进度窗口才视为取消；正常完成时由代码关闭窗口。
                 progressWindow.Closing += (_, __) =>
                 {
                     if (!progressClosedByCode)
@@ -820,28 +857,36 @@ namespace WpfApp1
                     }
                 };
                 progressWindow.Show();
+
+                // 将执行权暂时交还给调度器，使进度窗口先完成渲染并响应可能的关闭操作。
                 await Dispatcher.Yield(DispatcherPriority.Background);
                 if (operationCanceled)
                 {
                     return;
                 }
 
+                // 保存本次读取上下文并生成目标唯一标识。
                 _readLocalIp = GetLocalIpv4();
                 _readTargetUser = targetUser;
                 _readTargetIp = targetIp;
-                targetIdentity = BuildSshTargetIdentity(targetUser, targetIp);
-                BeginReadTimingCollection();
-                setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1} ...", targetUser, targetIp));
+                _readTargetPort = targetPort;
+                targetIdentity = BuildSshTargetIdentity(targetUser, targetIp, targetPort);
+
+                setReadProgress(30, "密码校验", string.Format("正在以密码模式校验 SSH：{0}@{1}:{2} ", targetUser, targetIp, targetPort));
+
                 var validateOut = string.Empty;
                 var validateErr = string.Empty;
+                // SSH 调用是阻塞操作，放到后台线程执行以保持界面可响应；远端返回固定标记
+                // 才表示命令确实执行成功，避免仅凭进程退出状态误判密码校验结果。
                 var validateOk = await Task.Run(() => ExecuteSshRemoteCommand(
                     targetUser,
-                    targetIp,
+                    BuildSshHostEndpoint(targetIp, targetPort),
                     targetPassword,
-                    "echo __PWD_CHECK_OK__",
-                    15000,
-                    out validateOut,
-                    out validateErr));
+                     "echo __PWD_CHECK_OK__",
+                     15000,
+                     out validateOut,
+                     out validateErr,
+                     "ssh-password-check"));
                 if (operationCanceled)
                 {
                     return;
@@ -849,78 +894,124 @@ namespace WpfApp1
 
                 if (!validateOk || (validateOut ?? string.Empty).IndexOf("__PWD_CHECK_OK__", StringComparison.OrdinalIgnoreCase) < 0)
                 {
+                    // 校验失败时先按“代码主动关闭”处理进度窗口，再展示 SSH 标准错误或输出。
                     progressClosedByCode = true;
                     CloseWindowQuietly(ref progressWindow);
                     if (!operationCanceled)
                     {
                         ShowScrollableErrorDialog(
                             "读取设备信息",
-                            "密码校验失败，请检查用户名/密码。\n\n输出：\n" +
-                            (string.IsNullOrWhiteSpace(validateErr) ? (validateOut ?? string.Empty) : validateErr));
+                            "密码校验失败，请检查用户名/IP/端口/密码。\n\n输出：\n" +
+                            (string.IsNullOrWhiteSpace(validateErr) ? (validateOut ?? string.Empty) : validateErr) +
+                            "\n\n耗时摘要：\n" + BuildReadTimingSummary());
                     }
 
                     return;
                 }
-                var existed = _readTargetIps.Contains(targetIdentity);
+
+                // 校验成功后再登记目标和密码，供后续远程 Docker 命令复用。
+                exactTargetIdentityExisted = _readTargetIps.Contains(targetIdentity);
+                hadPreviousTargetPassword = _sshPasswordByTarget.TryGetValue(targetIdentity, out previousTargetPassword);
+                replacedTargetIdentity = _readTargetIps.FirstOrDefault(identity =>
+                {
+                    var value = (identity ?? string.Empty).Trim();
+                    string existingUser;
+                    string host;
+                    int existingPort;
+                    TryParseSshTargetIdentity(value, out existingUser, out host, out existingPort);
+                    return string.Equals(value, targetIdentity, StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(host, targetIp, StringComparison.OrdinalIgnoreCase);
+                }) ?? string.Empty;
                 _readTargetIps.Add(targetIdentity);
                 _sshPasswordByTarget[targetIdentity] = targetPassword ?? string.Empty;
+                targetRegisteredThisAttempt = !exactTargetIdentityExisted;
                 _hasReadDeviceInfo = true;
+
                 setReadProgress(56, "拉取镜像与资源", "正在拉取远程镜像与资源指标数据...");
-                await RefreshRuntimeDataBindingsAsync(true, true);
+
+                // 首次读取使用轻量容器汇总：保留镜像和 Docker 磁盘信息，不预取容器明细。
+                var readSucceeded = await RefreshRuntimeDataBindingsAsync(
+                    true,
+                    ContainerReadMode.LightweightSummary,
+                    new[] { targetIdentity },
+                    SnapshotApplyMode.MergeDevices);
                 if (operationCanceled)
                 {
                     return;
                 }
 
-                var containsTargetDevice = _devices.Any(d => string.Equals(d.Ip, targetIp, StringComparison.OrdinalIgnoreCase));
-                if (!containsTargetDevice)
+                if (!readSucceeded)
                 {
-                    if (!existed)
+                    // 本次新增的目标未返回 Docker 数据时，撤销刚写入的目标、密码和命令候选缓存；
+                    // 已存在的目标保留原缓存，避免一次刷新失败破坏此前的连接配置。
+                    if (!exactTargetIdentityExisted)
                     {
                         _readTargetIps.Remove(targetIdentity);
                         _sshPasswordByTarget.Remove(targetIdentity);
                         _preferredSshDockerCandidateIndex.Remove(targetIdentity);
+                        lock (_remoteDockerRouteLock)
+                        {
+                            _remoteDockerRoutes.Remove(targetIdentity);
+                        }
+                    }
+                    else if (hadPreviousTargetPassword)
+                    {
+                        _sshPasswordByTarget[targetIdentity] = previousTargetPassword;
                     }
 
                     if (_readTargetIps.Count == 0)
                     {
+                        // 已无任何有效目标时恢复冷启动界面，防止继续显示失败读取留下的数据。
                         _hasReadDeviceInfo = false;
                         ClearRuntimeDataForColdStart();
                     }
-                    else
-                    {
-                        await RefreshRuntimeDataBindingsAsync(true, true);
-                    }
-
                     progressClosedByCode = true;
                     CloseWindowQuietly(ref progressWindow);
                     if (!operationCanceled)
                     {
-                        MessageBox.Show(
-                            this,
-                            string.Format("连接失败：未读取到目标设备 {0} 的 Docker 运行信息。", targetIp),
+                        ShowScrollableErrorDialog(
                             "读取设备信息",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
+                            string.Format(
+                                "连接失败：未读取到目标设备 {0}:{1} 的 Docker 运行信息。\n\n耗时摘要：\n{2}",
+                                targetIp,
+                                targetPort,
+                                BuildReadTimingSummary()));
                     }
 
                     return;
                 }
 
+                if (!string.IsNullOrWhiteSpace(replacedTargetIdentity) &&
+                    !string.Equals(replacedTargetIdentity, targetIdentity, StringComparison.OrdinalIgnoreCase))
+                {
+                    _readTargetIps.Remove(replacedTargetIdentity);
+                    _sshPasswordByTarget.Remove(replacedTargetIdentity);
+                    _preferredSshDockerCandidateIndex.Remove(replacedTargetIdentity);
+                    _lastSshErrorByTarget.Remove(replacedTargetIdentity);
+                    lock (_remoteDockerRouteLock)
+                    {
+                        _remoteDockerRoutes.Remove(replacedTargetIdentity);
+                    }
+                }
+
+                // 为已发现设备准备日志文件后，再向用户报告读取成功。
                 EnsureContainerLogCsvFilesForKnownDevices();
+
                 setReadProgress(100, "完成", "设备信息读取完成。");
 
                 progressClosedByCode = true;
                 CloseWindowQuietly(ref progressWindow);
                 if (!operationCanceled)
                 {
+                    // 汇总各阶段耗时，并连同当前有效目标数量一起反馈给用户。
                     var timingSummary = BuildReadTimingSummary();
                     MessageBox.Show(
                         this,
                         string.Format(
-                            "连接成功：{0}@{1}\n当前已连接设备目标数：{2}\n\n耗时摘要：\n{3}",
+                            "连接成功：{0}@{1}:{2}\n当前已连接设备目标数：{3}\n\n耗时摘要：\n{4}",
                             targetUser,
                             targetIp,
+                            targetPort,
                             _readTargetIps.Count,
                             timingSummary),
                         "读取设备信息",
@@ -930,20 +1021,31 @@ namespace WpfApp1
             }
             finally
             {
+                // 无论从哪个分支退出，都结束本次计时采集，避免影响下一次读取的统计结果。
                 EndReadTimingCollection();
-                if (operationCanceled && !string.IsNullOrWhiteSpace(targetIdentity))
+                // 用户中途取消时清除当前目标状态，避免保留不完整的运行时数据。
+                if (operationCanceled && targetRegisteredThisAttempt && !string.IsNullOrWhiteSpace(targetIdentity))
                 {
                     _readTargetIps.Remove(targetIdentity);
                     _sshPasswordByTarget.Remove(targetIdentity);
                     _preferredSshDockerCandidateIndex.Remove(targetIdentity);
                     _lastSshErrorByTarget.Remove(targetIdentity);
+                    lock (_remoteDockerRouteLock)
+                    {
+                        _remoteDockerRoutes.Remove(targetIdentity);
+                    }
                     if (_readTargetIps.Count == 0)
                     {
                         _hasReadDeviceInfo = false;
                         ClearRuntimeDataForColdStart();
                     }
                 }
+                else if (operationCanceled && exactTargetIdentityExisted && hadPreviousTargetPassword)
+                {
+                    _sshPasswordByTarget[targetIdentity] = previousTargetPassword;
+                }
 
+                // 无论成功、失败还是取消，都确保关闭进度窗口并恢复主窗口焦点。
                 if (progressWindow != null)
                 {
                     try
@@ -960,13 +1062,15 @@ namespace WpfApp1
             }
         }
 
-        private bool ShowReadDeviceInfoDialog(out string targetUser, out string targetIp, out string targetPassword)
+        private bool ShowReadDeviceInfoDialog(out string targetUser, out string targetIp, out int targetPort, out string targetPassword)
         {
             targetUser = string.Empty;
             targetIp = string.Empty;
+            targetPort = 22;
             targetPassword = string.Empty;
             var selectedTargetUser = string.Empty;
             var selectedTargetIp = string.Empty;
+            var selectedTargetPort = 22;
             var selectedTargetPassword = string.Empty;
 
             var targetUserBox = new TextBox
@@ -983,6 +1087,14 @@ namespace WpfApp1
                 Height = 32,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Text = _readTargetIp
+            };
+
+            var targetPortBox = new TextBox
+            {
+                Width = 500,
+                Height = 32,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Text = _readTargetPort.ToString(CultureInfo.InvariantCulture)
             };
 
             var targetPasswordBox = new PasswordBox
@@ -1012,7 +1124,7 @@ namespace WpfApp1
             {
                 Margin = new Thickness(0, 4, 0, 0),
                 Foreground = new SolidColorBrush(Color.FromRgb(71, 85, 105)),
-                Text = "将通过 SSH 远程执行 Docker 命令读取设备信息（用户名 + 目标IP + 密码）。"
+                Text = "将通过 SSH 远程执行 Docker 命令读取设备信息（用户名 + 目标IP + 端口 + 密码）。"
             };
 
             var panel = new Grid { Margin = new Thickness(46, 26, 20, 0) };
@@ -1022,9 +1134,11 @@ namespace WpfApp1
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             AddReadDeviceDialogRow(panel, 0, "SSH 用户名", targetUserBox);
             AddReadDeviceDialogRow(panel, 1, "通信目标IP地址", targetIpBox);
+            AddReadDeviceDialogRow(panel, 2, "SSH 端口", targetPortBox);
             var passwordRow = new Grid { HorizontalAlignment = HorizontalAlignment.Left };
             passwordRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             passwordRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1034,8 +1148,8 @@ namespace WpfApp1
             passwordRow.Children.Add(targetPasswordBox);
             passwordRow.Children.Add(targetPasswordTextBox);
             passwordRow.Children.Add(passwordEyeButton);
-            AddReadDeviceDialogRow(panel, 2, "SSH 密码", passwordRow);
-            Grid.SetRow(tips, 3);
+            AddReadDeviceDialogRow(panel, 3, "SSH 密码", passwordRow);
+            Grid.SetRow(tips, 4);
             Grid.SetColumn(tips, 1);
             panel.Children.Add(tips);
 
@@ -1082,7 +1196,7 @@ namespace WpfApp1
             {
                 Title = "读取设备信息",
                 Width = 820,
-                Height = 320,
+                Height = 370,
                 MinWidth = 760,
                 MinHeight = 300,
                 ResizeMode = ResizeMode.CanResize,
@@ -1108,6 +1222,14 @@ namespace WpfApp1
                     return;
                 }
 
+                int port;
+                if (!int.TryParse((targetPortBox.Text ?? string.Empty).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out port) ||
+                    port < 1 || port > 65535)
+                {
+                    MessageBox.Show("请输入 1 到 65535 之间的有效 SSH 端口号。", "读取设备信息", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
                 var password = targetPasswordTextBox.Visibility == Visibility.Visible
                     ? (targetPasswordTextBox.Text ?? string.Empty)
                     : (targetPasswordBox.Password ?? string.Empty);
@@ -1119,6 +1241,7 @@ namespace WpfApp1
 
                 selectedTargetUser = user;
                 selectedTargetIp = target;
+                selectedTargetPort = port;
                 selectedTargetPassword = password;
                 dialog.DialogResult = true;
             };
@@ -1145,6 +1268,7 @@ namespace WpfApp1
             {
                 targetUser = selectedTargetUser;
                 targetIp = selectedTargetIp;
+                targetPort = selectedTargetPort;
                 targetPassword = selectedTargetPassword;
                 return true;
             }
@@ -1251,11 +1375,6 @@ namespace WpfApp1
 
         private async void ContainerModifyNameMenuItem_OnClick(object sender, RoutedEventArgs e)
         {
-            if (_isContainerActionRunning)
-            {
-                return;
-            }
-
             var selectedRow = ContainerComposeGrid == null ? null : ContainerComposeGrid.SelectedItem as ContainerComposeRow;
             if (selectedRow == null)
             {
@@ -1312,8 +1431,18 @@ namespace WpfApp1
                 return;
             }
 
-            _isContainerActionRunning = true;
-            SetContainerActionButtonsEnabled(false);
+            if (!await ConfirmContainerOperationAsync(contextName, new List<ContainerComposeRow> { selectedRow }))
+            {
+                return;
+            }
+
+            List<string> lockedContainerIds;
+            if (!TryLockContainerRows(new[] { selectedRow }, out lockedContainerIds))
+            {
+                MessageBox.Show(this, "该容器正在执行其他操作，请稍后重试。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
             Window progressWindow = null;
             TextBlock progressText = null;
             try
@@ -1324,7 +1453,7 @@ namespace WpfApp1
                 progressWindow.Show();
                 await Dispatcher.Yield(DispatcherPriority.Background);
 
-                var renameSource = string.IsNullOrWhiteSpace(selectedRow.FullId) ? oldName : selectedRow.FullId;
+                var renameSource = selectedRow.FullId;
                 var renameCommand = string.Format("rename \"{0}\" \"{1}\"", renameSource, normalizedNewName);
                 var renameOut = string.Empty;
                 var renameOk = await Task.Run(() => TryRunDockerCommand(renameCommand, contextName, out renameOut));
@@ -1362,7 +1491,9 @@ namespace WpfApp1
                     logSourceRow.MemoryPercent,
                     logSourceRow.DiskReadWrite,
                     logSourceRow.Detail,
-                    string.IsNullOrWhiteSpace(logSourceRow.FullId) ? selectedRow.FullId : logSourceRow.FullId);
+                    string.IsNullOrWhiteSpace(logSourceRow.FullId) ? selectedRow.FullId : logSourceRow.FullId,
+                    logSourceRow.Size,
+                    logSourceRow.Command);
 
                 AddContainerOperationLog(
                     contextName,
@@ -1394,8 +1525,8 @@ namespace WpfApp1
                     }
                 }
 
-                _isContainerActionRunning = false;
-                SetContainerActionButtonsEnabled(true);
+                UnlockContainerRows(lockedContainerIds);
+                UpdateContainerActionAvailability();
                 RestoreMainWindowFocus();
             }
         }
@@ -1861,7 +1992,40 @@ namespace WpfApp1
                     await WaitForRuntimeRefreshIdleAsync(10000);
                 }
 
-                await RefreshRuntimeDataBindingsAsync(true, true);
+                var selectedItem = DeviceSelector.SelectedItem as ComboBoxItem;
+                var selectedDevice = selectedItem == null ? null : selectedItem.Tag as DeviceInfo;
+                if (selectedDevice == null)
+                {
+                    // “全部设备”只在用户明确选择全部时读取所有已登记目标。
+                    await RefreshRuntimeDataBindingsAsync(true, ContainerReadMode.LightweightSummary);
+                }
+                else
+                {
+                    var contextName = selectedDevice.ContextName;
+                    if (string.IsNullOrWhiteSpace(contextName))
+                    {
+                        _deviceContextMap.TryGetValue(selectedDevice.Name, out contextName);
+                    }
+
+                    string identity;
+                    if (!TryResolveSshIdentityForContext(contextName, out identity) ||
+                        string.IsNullOrWhiteSpace(identity))
+                    {
+                        MessageBox.Show(
+                            this,
+                            "无法确定当前设备对应的 SSH 目标，本次未刷新其他设备。",
+                            "刷新设备信息",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                        return;
+                    }
+
+                    await RefreshRuntimeDataBindingsAsync(
+                        true,
+                        ContainerReadMode.LightweightSummary,
+                        new[] { identity },
+                        SnapshotApplyMode.MergeDevices);
+                }
             }
             finally
             {
@@ -1910,7 +2074,7 @@ namespace WpfApp1
                         var parsedHost = (uri.Host ?? string.Empty).Trim();
                         if (!string.IsNullOrWhiteSpace(parsedUser) && !string.IsNullOrWhiteSpace(parsedHost))
                         {
-                            var identity = BuildSshTargetIdentity(parsedUser, parsedHost);
+                            var identity = BuildSshTargetIdentity(parsedUser, parsedHost, ResolveSshPort(uri));
                             if (TryResolveSshTarget(identity, out user, out host, out password))
                             {
                                 return true;
@@ -1939,14 +2103,15 @@ namespace WpfApp1
                         continue;
                     }
 
-                    var at = identity.LastIndexOf('@');
-                    if (at <= 0 || at >= identity.Length - 1)
+                    string parsedUser;
+                    string parsedHost;
+                    int parsedPort;
+                    if (!TryParseSshTargetIdentity(identity, out parsedUser, out parsedHost, out parsedPort))
                     {
                         continue;
                     }
 
-                    var hostPart = identity.Substring(at + 1).Trim();
-                    if (!string.Equals(hostPart, ip, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(parsedHost, ip, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -1973,7 +2138,7 @@ namespace WpfApp1
                 }
             }
 
-            var lastIdentity = BuildSshTargetIdentity(_readTargetUser, _readTargetIp);
+            var lastIdentity = BuildSshTargetIdentity(_readTargetUser, _readTargetIp, _readTargetPort);
             if (TryResolveSshTarget(lastIdentity, out user, out host, out password))
             {
                 return true;
@@ -2022,7 +2187,7 @@ namespace WpfApp1
                     return false;
                 }
 
-                identity = BuildSshTargetIdentity(parsedUser, parsedHost);
+                identity = BuildSshTargetIdentity(parsedUser, parsedHost, ResolveSshPort(uri));
                 return !string.IsNullOrWhiteSpace(identity);
             }
             catch
@@ -2206,52 +2371,22 @@ namespace WpfApp1
             return geometry;
         }
 
-        private void ApplyDockerSnapshot(DockerRuntimeSnapshot snapshot)
+        private void ApplyDockerSnapshot(DockerRuntimeSnapshot snapshot, SnapshotApplyMode applyMode)
         {
-            var devices = snapshot.Devices;
-            if (!snapshot.IncludeContainerData && _devices.Count > 0)
+            if (applyMode == SnapshotApplyMode.MergeDevices)
             {
-                devices = snapshot.Devices
-                    .Select(device =>
-                    {
-                        var existing = _devices.FirstOrDefault(d =>
-                            (!string.IsNullOrWhiteSpace(device.ContextName) &&
-                             string.Equals(d.ContextName, device.ContextName, StringComparison.OrdinalIgnoreCase)) ||
-                            (!string.IsNullOrWhiteSpace(device.Ip) &&
-                             string.Equals(d.Ip, device.Ip, StringComparison.OrdinalIgnoreCase)) ||
-                            string.Equals(d.Name, device.Name, StringComparison.OrdinalIgnoreCase));
-
-                        return existing == null
-                            ? device
-                            : new DeviceInfo(
-                                device.Name,
-                                device.Ip,
-                                existing.CpuUsage,
-                                existing.MemoryUsage,
-                                existing.DiskUsage,
-                                device.ImageCount,
-                                device.ContainerCount,
-                                device.ContextName);
-                    })
-                    .ToList();
+                MergeDockerSnapshot(snapshot);
+                return;
             }
 
+            var devices = snapshot.Devices;
             _devices.Clear();
             _devices.AddRange(devices);
 
             _allImageRows.Clear();
             _allImageRows.AddRange(snapshot.DeviceImageRows);
 
-            _sourceImages.Clear();
-            _sourceImages.AddRange(snapshot.SourceImages);
-
-            _preparedImages.Clear();
-            _preparedImages.AddRange(snapshot.PreparedImages);
-
-            _programFiles.Clear();
-            _programFiles.AddRange(snapshot.ProgramFiles);
-
-            if (snapshot.IncludeContainerData)
+            if (snapshot.ContainerReadMode == ContainerReadMode.FullDetails)
             {
                 _containerRows.Clear();
                 _containerRows.AddRange(snapshot.ContainerRows);
@@ -2267,9 +2402,98 @@ namespace WpfApp1
             }
         }
 
+        private void MergeDockerSnapshot(DockerRuntimeSnapshot snapshot)
+        {
+            for (var i = 0; i < snapshot.Devices.Count; i++)
+            {
+                var incoming = snapshot.Devices[i];
+                var existingIndex = _devices.FindIndex(device => IsSameDevice(device, incoming));
+                var existing = existingIndex >= 0 ? _devices[existingIndex] : null;
+                var deviceName = existing == null ? incoming.Name : existing.Name;
+                var mergedDevice = new DeviceInfo(
+                    deviceName,
+                    incoming.Ip,
+                    incoming.CpuUsage,
+                    incoming.MemoryUsage,
+                    incoming.DiskUsage,
+                    incoming.ImageCount,
+                    incoming.ContainerCount,
+                    incoming.ContextName);
+
+                if (existingIndex >= 0)
+                {
+                    _devices[existingIndex] = mergedDevice;
+                }
+                else
+                {
+                    _devices.Add(mergedDevice);
+                }
+
+                _allImageRows.RemoveAll(row =>
+                    string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) ||
+                    (!string.IsNullOrWhiteSpace(incoming.ContextName) &&
+                     string.Equals(row.ContextName, incoming.ContextName, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(incoming.Ip) &&
+                     string.Equals(row.DeviceIp, incoming.Ip, StringComparison.OrdinalIgnoreCase)));
+
+                var incomingRows = snapshot.DeviceImageRows
+                    .Where(row =>
+                        string.Equals(row.DeviceName, incoming.Name, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrWhiteSpace(incoming.ContextName) &&
+                         string.Equals(row.ContextName, incoming.ContextName, StringComparison.OrdinalIgnoreCase)))
+                    .Select(row => new DeviceImageRow(
+                        row.DeviceIp,
+                        row.Repository,
+                        row.Tag,
+                        row.Created,
+                        row.Size,
+                        row.Labels,
+                        row.ImageId,
+                        row.ChineseName,
+                        deviceName,
+                        row.ContextName))
+                    .ToList();
+                _allImageRows.AddRange(incomingRows);
+
+                var staleContextKeys = _deviceContextMap
+                    .Where(pair =>
+                        string.Equals(pair.Key, deviceName, StringComparison.OrdinalIgnoreCase) ||
+                        (!string.IsNullOrWhiteSpace(incoming.ContextName) &&
+                         string.Equals(pair.Value, incoming.ContextName, StringComparison.OrdinalIgnoreCase)))
+                    .Select(pair => pair.Key)
+                    .ToList();
+                for (var keyIndex = 0; keyIndex < staleContextKeys.Count; keyIndex++)
+                {
+                    _deviceContextMap.Remove(staleContextKeys[keyIndex]);
+                }
+                _deviceContextMap[deviceName] = incoming.ContextName;
+
+                if (snapshot.ContainerReadMode == ContainerReadMode.FullDetails)
+                {
+                    _containerRows.RemoveAll(row => string.Equals(row.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase));
+                    _containerRows.AddRange(snapshot.ContainerRows.Where(row =>
+                        string.Equals(row.DeviceName, incoming.Name, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+        }
+
+        private static bool IsSameDevice(DeviceInfo left, DeviceInfo right)
+        {
+            if (left == null || right == null)
+            {
+                return false;
+            }
+
+            return (!string.IsNullOrWhiteSpace(left.ContextName) &&
+                    string.Equals(left.ContextName, right.ContextName, StringComparison.OrdinalIgnoreCase)) ||
+                   (!string.IsNullOrWhiteSpace(left.Ip) &&
+                    string.Equals(left.Ip, right.Ip, StringComparison.OrdinalIgnoreCase));
+        }
+
         private void RefreshLocalServiceImageLists()
         {
-            var mergedPrepared = ReadLocalPreparedImagesFromDocker();
+            var localImages = ReadDockerImages(null);
+            var mergedPrepared = ReadLocalPreparedImagesFromDocker(localImages);
 
             var preparedRepoTags = new HashSet<string>(
                 mergedPrepared
@@ -2277,7 +2501,7 @@ namespace WpfApp1
                     .Where(tag => !string.IsNullOrWhiteSpace(tag)),
                 StringComparer.OrdinalIgnoreCase);
 
-            var localBaseImages = ReadLocalBaseImages(preparedRepoTags);
+            var localBaseImages = ReadLocalBaseImages(localImages, preparedRepoTags);
             _sourceImages.Clear();
             _sourceImages.AddRange(localBaseImages);
 
@@ -2291,10 +2515,10 @@ namespace WpfApp1
             _programFiles.AddRange(ReadLocalProgramPackages());
         }
 
-        private List<ImageComposeRow> ReadLocalBaseImages(HashSet<string> excludedRepoTags)
+        private List<ImageComposeRow> ReadLocalBaseImages(List<DockerImageInfo> localImages, HashSet<string> excludedRepoTags)
         {
             var rows = new List<ImageComposeRow>();
-            var localImages = ReadDockerImages(null);
+            localImages = localImages ?? new List<DockerImageInfo>();
             for (var i = 0; i < localImages.Count; i++)
             {
                 var img = localImages[i];
@@ -2327,10 +2551,10 @@ namespace WpfApp1
                 .ToList();
         }
 
-        private List<ImageComposeRow> ReadLocalPreparedImagesFromDocker()
+        private List<ImageComposeRow> ReadLocalPreparedImagesFromDocker(List<DockerImageInfo> localImages)
         {
             var rows = new List<ImageComposeRow>();
-            var localImages = ReadDockerImages(null);
+            localImages = localImages ?? new List<DockerImageInfo>();
             for (var i = 0; i < localImages.Count; i++)
             {
                 var img = localImages[i];
@@ -2344,12 +2568,13 @@ namespace WpfApp1
                     continue;
                 }
 
-                if (!tag.StartsWith("custom_image", StringComparison.OrdinalIgnoreCase))
+                var repoTag = repository + ":" + tag;
+                if (!tag.StartsWith("custom_image", StringComparison.OrdinalIgnoreCase) &&
+                    !_promotedPreparedImageRepoTags.Contains(NormalizeRepoTag(repoTag)))
                 {
                     continue;
                 }
 
-                var repoTag = repository + ":" + tag;
                 var chineseName = ResolveImageChineseName("LOCAL", "本地", string.Empty, repository, tag, img.Id);
                 rows.Add(new ImageComposeRow(
                     repoTag,
@@ -2396,7 +2621,36 @@ namespace WpfApp1
             return fallbackCreatedAt ?? string.Empty;
         }
 
-        private bool TryReadDockerSnapshot(out DockerRuntimeSnapshot snapshot, string localIp, IEnumerable<string> targetIps, bool includeContainerData)
+        private string ResolveSnapshotDeviceName(string contextName, string ip, HashSet<string> usedDeviceNames)
+        {
+            var existing = _devices.FirstOrDefault(device =>
+                (!string.IsNullOrWhiteSpace(contextName) &&
+                 string.Equals(device.ContextName, contextName, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(ip) &&
+                 string.Equals(device.Ip, ip, StringComparison.OrdinalIgnoreCase)));
+            if (existing != null &&
+                (usedDeviceNames == null || !usedDeviceNames.Contains(existing.Name)))
+            {
+                return existing.Name;
+            }
+
+            var unavailableNames = new HashSet<string>(
+                _devices.Where(device => device != null).Select(device => device.Name),
+                StringComparer.OrdinalIgnoreCase);
+            if (usedDeviceNames != null)
+            {
+                unavailableNames.UnionWith(usedDeviceNames);
+            }
+
+            var deviceIndex = 1;
+            while (unavailableNames.Contains(string.Format("设备{0}", deviceIndex)))
+            {
+                deviceIndex++;
+            }
+            return string.Format("设备{0}", deviceIndex);
+        }
+
+        private bool TryReadDockerSnapshot(out DockerRuntimeSnapshot snapshot, string localIp, IEnumerable<string> targetIps, ContainerReadMode containerReadMode)
         {
             snapshot = null;
 
@@ -2451,61 +2705,59 @@ namespace WpfApp1
             var devices = new List<DeviceInfo>();
             var imageRows = new List<DeviceImageRow>();
             var containerRows = new List<ContainerComposeRow>();
-            var imageComposeRows = new List<ImageComposeRow>();
-            var programRows = new List<ProgramFileRow>();
-            var strategyRows = new List<DeployImageCard>();
             var deviceContexts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var seenIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var usedDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            var deviceIndex = 1;
             for (var i = 0; i < contexts.Count; i++)
             {
                 var context = contexts[i];
-                var deviceName = string.Format("设备{0}", deviceIndex);
                 var ip = ResolveContextIp(context.DockerHost);
                 if (!string.IsNullOrWhiteSpace(ip) && seenIps.Contains(ip))
                 {
                     continue;
                 }
                 seenIps.Add(ip);
-                deviceIndex++;
+                var deviceName = ResolveSnapshotDeviceName(context.Name, ip, usedDeviceNames);
+                usedDeviceNames.Add(deviceName);
 
-                var images = ReadDockerImages(context.Name);
-                var containers = includeContainerData
-                    ? ReadDockerContainers(context.Name)
-                    : new List<DockerContainerInfo>();
-                var containerStats = includeContainerData
-                    ? ReadDockerContainerStats(context.Name)
-                    : new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
-                var diskUsage = includeContainerData
-                    ? ReadDockerRootDiskUsagePercent(context.Name)
-                    : 0;
-                var hostCpuLimitText = includeContainerData ? ReadHostCpuLimitText(context.Name) : "-";
-                var hostMemoryTotalMb = includeContainerData ? ReadHostMemoryLimitMb(context.Name) : 0;
+                var images = new List<DockerImageInfo>();
+                var containers = new List<DockerContainerInfo>();
+                var containerStats = new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
+                var hostCpuLimitText = "-";
+                var cpuUsage = 0d;
+                var memoryUsage = 0d;
+                var diskUsage = 0d;
+                var runningCount = 0;
 
-                var cpuUsage = includeContainerData
-                    ? CalculateContainerCpuUsagePercent(containerStats.Values, hostCpuLimitText)
-                    : 0;
-                var memoryUsage = includeContainerData
-                    ? CalculateContainerMemoryUsagePercent(containerStats.Values, hostMemoryTotalMb)
-                    : 0;
-                if (!includeContainerData)
+                if (containerReadMode == ContainerReadMode.FullDetails)
                 {
-                    double hostCpuUsage;
-                    double hostMemoryUsage;
-                    double hostDiskUsage;
-                    if (TryReadHostResourceUsage(context.Name, out hostCpuUsage, out hostMemoryUsage, out hostDiskUsage))
+                    images = ReadDockerImages(context.Name);
+                    containers = ReadDockerContainers(context.Name);
+                    containerStats = ReadDockerContainerStats(context.Name);
+                    hostCpuLimitText = ReadHostCpuLimitText(context.Name);
+                    var hostMemoryTotalMb = ReadHostMemoryLimitMb(context.Name);
+                    cpuUsage = CalculateContainerCpuUsagePercent(containerStats.Values, hostCpuLimitText);
+                    memoryUsage = CalculateContainerMemoryUsagePercent(containerStats.Values, hostMemoryTotalMb);
+                    runningCount = containers.Count(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase));
+                    diskUsage = ReadDockerRootDiskUsagePercent(context.Name);
+                }
+                else
+                {
+                    LightweightDockerData lightweightData;
+                    if (!TryReadLightweightDockerData(context.Name, out lightweightData))
                     {
-                        cpuUsage = hostCpuUsage;
-                        memoryUsage = hostMemoryUsage;
-                        diskUsage = hostDiskUsage;
+                        return false;
                     }
+
+                    images = lightweightData.Images;
+                    runningCount = lightweightData.RunningContainerCount;
+                    cpuUsage = lightweightData.CpuUsagePercent;
+                    memoryUsage = lightweightData.MemoryUsagePercent;
+                    diskUsage = lightweightData.DiskUsagePercent;
                 }
 
-                var runningCount = includeContainerData
-                    ? containers.Count(c => string.Equals(c.State, "running", StringComparison.OrdinalIgnoreCase))
-                    : ReadRunningContainerCount(context.Name);
-                if (includeContainerData && runningCount == 0)
+                if (containerReadMode == ContainerReadMode.FullDetails && runningCount == 0)
                 {
                     runningCount = containers.Count(c => c.Status.IndexOf("Up", StringComparison.OrdinalIgnoreCase) >= 0);
                 }
@@ -2535,12 +2787,9 @@ namespace WpfApp1
                         deviceName,
                         context.Name));
 
-                    var repoTag = string.Format("{0}:{1}", img.Repository, img.Tag);
-                    imageComposeRows.Add(new ImageComposeRow(repoTag, NormalizeImageId(img.Id), img.CreatedAt, img.Size, deviceName, context.Name, imageChineseName));
-                    strategyRows.Add(new DeployImageCard(repoTag, ShortId(img.Id, 12), img.CreatedAt, img.Size));
                 }
 
-                for (var cIndex = 0; cIndex < containers.Count; cIndex++)
+                for (var cIndex = 0; containerReadMode == ContainerReadMode.FullDetails && cIndex < containers.Count; cIndex++)
                 {
                     var c = containers[cIndex];
                     DockerContainerStatsInfo stat;
@@ -2567,7 +2816,8 @@ namespace WpfApp1
                         hasStat ? stat.BlockIoText : "0B / 0B",
                         c.Status,
                         c.Id,
-                        c.Size));
+                        c.Size,
+                        c.Command));
                 }
             }
 
@@ -2576,42 +2826,12 @@ namespace WpfApp1
                 return false;
             }
 
-            var localProgramPackages = ReadLocalProgramPackages();
-            if (localProgramPackages.Count > 0)
-            {
-                programRows.AddRange(localProgramPackages);
-            }
-            else
-            {
-                for (var i = 0; i < imageComposeRows.Count && i < 30; i++)
-                {
-                    var row = imageComposeRows[i];
-                    programRows.Add(new ProgramFileRow(row.RepoTag, row.SizeMb, row.Created));
-                }
-            }
-
-            var prepared = imageComposeRows
-                .Where(r => r.RepoTag.IndexOf("custom", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            r.RepoTag.IndexOf("temp", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            r.RepoTag.IndexOf("build", StringComparison.OrdinalIgnoreCase) >= 0)
-                .Take(20)
-                .ToList();
-
-            if (prepared.Count == 0)
-            {
-                prepared = imageComposeRows.Take(20).ToList();
-            }
-
             snapshot = new DockerRuntimeSnapshot(
                 devices,
                 imageRows,
                 containerRows,
-                imageComposeRows.Take(40).ToList(),
-                prepared,
-                programRows.Take(30).ToList(),
-                strategyRows.Take(50).ToList(),
                 deviceContexts,
-                includeContainerData);
+                containerReadMode);
 
             return true;
         }
@@ -3107,42 +3327,101 @@ namespace WpfApp1
             }
 
             var targetUser = string.Empty;
-            var targetHostIp = targetIp;
-            var at = targetIp.IndexOf('@');
-            if (at > 0 && at < targetIp.Length - 1)
+            string targetHostIp;
+            int targetPort;
+            if (!TryParseSshTargetIdentity(targetIp, out targetUser, out targetHostIp, out targetPort) &&
+                !TryParseSshHostEndpoint(targetIp, out targetHostIp, out targetPort))
             {
-                targetUser = targetIp.Substring(0, at).Trim();
-                targetHostIp = targetIp.Substring(at + 1).Trim();
+                return false;
             }
 
-            var resolvedIp = ResolveContextIp(context.DockerHost);
-            if (string.Equals(resolvedIp, targetHostIp, StringComparison.OrdinalIgnoreCase))
+            Uri uri;
+            var dockerHost = (context.DockerHost ?? string.Empty).Trim();
+            if (Uri.TryCreate(dockerHost, UriKind.Absolute, out uri) &&
+                string.Equals(uri.Scheme, "ssh", StringComparison.OrdinalIgnoreCase))
             {
-                if (string.IsNullOrWhiteSpace(targetUser))
-                {
-                    return true;
-                }
-
-                var hostText2 = context.DockerHost ?? string.Empty;
-                var userToken = "ssh://" + targetUser + "@";
-                return hostText2.IndexOf(userToken, StringComparison.OrdinalIgnoreCase) >= 0;
+                var contextUser = Uri.UnescapeDataString(uri.UserInfo ?? string.Empty).Trim();
+                return string.Equals(uri.Host, targetHostIp, StringComparison.OrdinalIgnoreCase) &&
+                       ResolveSshPort(uri) == targetPort &&
+                       (string.IsNullOrWhiteSpace(targetUser) ||
+                        string.Equals(contextUser, targetUser, StringComparison.OrdinalIgnoreCase));
             }
 
-            var hostText = context.DockerHost ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(targetUser))
-            {
-                var targetIdentity = targetUser + "@" + targetHostIp;
-                return hostText.IndexOf(targetIdentity, StringComparison.OrdinalIgnoreCase) >= 0;
-            }
-
-            return hostText.IndexOf(targetHostIp, StringComparison.OrdinalIgnoreCase) >= 0;
+            return false;
         }
 
-        private static string BuildSshTargetIdentity(string user, string ip)
+        private static string BuildSshTargetIdentity(string user, string hostOrEndpoint)
         {
-            var u = (user ?? string.Empty).Trim();
-            var h = (ip ?? string.Empty).Trim();
-            return string.IsNullOrWhiteSpace(u) ? h : (u + "@" + h);
+            string host;
+            int port;
+            if (!TryParseSshHostEndpoint(hostOrEndpoint, out host, out port))
+            {
+                host = (hostOrEndpoint ?? string.Empty).Trim();
+                port = 22;
+            }
+            return BuildSshTargetIdentity(user, host, port);
+        }
+
+        private static string BuildSshTargetIdentity(string user, string host, int port)
+        {
+            var normalizedUser = (user ?? string.Empty).Trim();
+            var endpoint = BuildSshHostEndpoint(host, port);
+            return string.IsNullOrWhiteSpace(normalizedUser) ? endpoint : (normalizedUser + "@" + endpoint);
+        }
+
+        private static string BuildSshHostEndpoint(string host, int port)
+        {
+            var normalizedHost = (host ?? string.Empty).Trim();
+            var normalizedPort = port >= 1 && port <= 65535 ? port : 22;
+            return normalizedPort == 22
+                ? normalizedHost
+                : normalizedHost + ":" + normalizedPort.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryParseSshHostEndpoint(string hostOrEndpoint, out string host, out int port)
+        {
+            host = (hostOrEndpoint ?? string.Empty).Trim();
+            port = 22;
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                return false;
+            }
+
+            var colon = host.LastIndexOf(':');
+            if (colon > 0 && colon < host.Length - 1 && host.IndexOf(':') == colon)
+            {
+                int parsedPort;
+                if (int.TryParse(host.Substring(colon + 1), NumberStyles.None, CultureInfo.InvariantCulture, out parsedPort) &&
+                    parsedPort >= 1 && parsedPort <= 65535)
+                {
+                    host = host.Substring(0, colon).Trim();
+                    port = parsedPort;
+                }
+            }
+
+            return !string.IsNullOrWhiteSpace(host);
+        }
+
+        private static bool TryParseSshTargetIdentity(string targetIdentity, out string user, out string host, out int port)
+        {
+            user = string.Empty;
+            host = string.Empty;
+            port = 22;
+            var identity = (targetIdentity ?? string.Empty).Trim();
+            var at = identity.IndexOf('@');
+            if (at <= 0 || at >= identity.Length - 1)
+            {
+                return false;
+            }
+
+            user = identity.Substring(0, at).Trim();
+            return !string.IsNullOrWhiteSpace(user) &&
+                   TryParseSshHostEndpoint(identity.Substring(at + 1), out host, out port);
+        }
+
+        private static int ResolveSshPort(Uri uri)
+        {
+            return uri != null && uri.Port >= 1 && uri.Port <= 65535 ? uri.Port : 22;
         }
 
         private List<DockerImageInfo> ReadDockerImages(string contextName)
@@ -3153,8 +3432,13 @@ namespace WpfApp1
                 return new List<DockerImageInfo>();
             }
 
+            return ParseDockerImages(output);
+        }
+
+        private static List<DockerImageInfo> ParseDockerImages(string output)
+        {
             var result = new List<DockerImageInfo>();
-            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
                 var parts = lines[i].Split('|');
@@ -3177,7 +3461,7 @@ namespace WpfApp1
         private List<DockerContainerInfo> ReadDockerContainers(string contextName)
         {
             string output;
-            if (!TryRunDockerCommand("ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}\"", contextName, out output))
+            if (!TryRunDockerCommand("ps -a --no-trunc --format \"{{.ID}}|{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}|{{.Command}}\"", contextName, out output))
             {
                 return new List<DockerContainerInfo>();
             }
@@ -3186,8 +3470,8 @@ namespace WpfApp1
             var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
-                var parts = lines[i].Split('|');
-                if (parts.Length < 5)
+                var parts = lines[i].Split(new[] { '|' }, 6);
+                if (parts.Length < 6)
                 {
                     continue;
                 }
@@ -3200,7 +3484,8 @@ namespace WpfApp1
                     parts[3].Trim(),
                     status,
                     InferContainerStateFromStatus(status),
-                    "-"));
+                    "-",
+                    parts[5].Trim()));
             }
 
             return result;
@@ -3211,7 +3496,7 @@ namespace WpfApp1
             string output;
             if (!string.IsNullOrWhiteSpace(containerId))
             {
-                var byIdCmd = string.Format("ps -a --no-trunc --filter \"id={0}\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}\"", containerId);
+                var byIdCmd = string.Format("ps -a --no-trunc --filter \"id={0}\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}|{{{{.Command}}}}\"", containerId);
                 if (TryRunDockerCommand(byIdCmd, contextName, out output))
                 {
                     var row = ParseSingleContainerInfo(output);
@@ -3225,7 +3510,7 @@ namespace WpfApp1
             if (!string.IsNullOrWhiteSpace(containerName))
             {
                 var cleanName = containerName.Trim().TrimStart('/');
-                var byNameCmd = string.Format("ps -a --no-trunc --filter \"name=^{0}$\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}\"", cleanName);
+                var byNameCmd = string.Format("ps -a --no-trunc --filter \"name=^{0}$\" --format \"{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Ports}}}}|{{{{.Status}}}}|{{{{.Command}}}}\"", cleanName);
                 if (TryRunDockerCommand(byNameCmd, contextName, out output))
                 {
                     return ParseSingleContainerInfo(output);
@@ -3243,8 +3528,8 @@ namespace WpfApp1
                 return null;
             }
 
-            var parts = lines[0].Split('|');
-            if (parts.Length < 5)
+            var parts = lines[0].Split(new[] { '|' }, 6);
+            if (parts.Length < 6)
             {
                 return null;
             }
@@ -3257,7 +3542,8 @@ namespace WpfApp1
                 parts[3].Trim(),
                 status,
                 InferContainerStateFromStatus(status),
-                "-");
+                "-",
+                parts[5].Trim());
         }
 
         private static string InferContainerStateFromStatus(string status)
@@ -3313,6 +3599,243 @@ namespace WpfApp1
             return false;
         }
 
+        private const string LightweightImagesBeginMarker = "__WPFAPP1_9F31_IMAGES_BEGIN__";
+        private const string LightweightImagesEndMarker = "__WPFAPP1_9F31_IMAGES_END__";
+        private const string LightweightStatsBeginMarker = "__WPFAPP1_9F31_STATS_BEGIN__";
+        private const string LightweightStatsEndMarker = "__WPFAPP1_9F31_STATS_END__";
+        private const string LightweightInfoBeginMarker = "__WPFAPP1_9F31_INFO_BEGIN__";
+        private const string LightweightInfoEndMarker = "__WPFAPP1_9F31_INFO_END__";
+        private const string LightweightDiskBeginMarker = "__WPFAPP1_9F31_DISK_BEGIN__";
+        private const string LightweightDiskEndMarker = "__WPFAPP1_9F31_DISK_END__";
+        private const string LightweightCompleteMarker = "__WPFAPP1_9F31_COMPLETE__";
+
+        private bool TryReadLightweightDockerData(string contextName, out LightweightDockerData data)
+        {
+            data = null;
+            string identity;
+            if (!TryResolveSshIdentityForContext(contextName, out identity) || string.IsNullOrWhiteSpace(identity))
+            {
+                return false;
+            }
+
+            string user;
+            string host;
+            string password;
+            if (!TryResolveSshTarget(identity, out user, out host, out password))
+            {
+                return false;
+            }
+
+            var targetIdentity = BuildSshTargetIdentity(user, host);
+            RemoteDockerRoute route;
+            DockerCommandExecutionResult probeFailure;
+            if (!TryEnsureRemoteDockerRoute(
+                targetIdentity,
+                CancellationToken.None,
+                false,
+                out route,
+                out probeFailure))
+            {
+                _lastSshErrorByTarget[targetIdentity] = string.IsNullOrWhiteSpace(probeFailure.StandardError)
+                    ? probeFailure.StandardOutput
+                    : probeFailure.StandardError;
+                return false;
+            }
+
+            var script = BuildLightweightDockerBatchScript(route.ExecutablePath, route.UseSudo, password);
+            var execution = ExecuteRemoteReadOnlyScript(user, host, password, script, CancellationToken.None);
+            if (execution.FailureKind == DockerCommandFailureKind.CommandNotFound ||
+                execution.FailureKind == DockerCommandFailureKind.DockerPermission)
+            {
+                lock (_remoteDockerRouteLock)
+                {
+                    _remoteDockerRoutes.Remove(targetIdentity);
+                }
+                if (TryEnsureRemoteDockerRoute(targetIdentity, CancellationToken.None, true, out route, out probeFailure))
+                {
+                    script = BuildLightweightDockerBatchScript(route.ExecutablePath, route.UseSudo, password);
+                    execution = ExecuteRemoteReadOnlyScript(user, host, password, script, CancellationToken.None);
+                }
+                else
+                {
+                    execution = probeFailure;
+                }
+            }
+            var stdOut = execution.StandardOutput;
+            var stdErr = execution.StandardError;
+            var ok = execution.Succeeded;
+            LightweightDockerData parsed;
+            var parseError = string.Empty;
+            if (ok && TryParseLightweightDockerBatchOutput(contextName, stdOut, out parsed, out parseError))
+            {
+                _lastSshErrorByTarget.Remove(targetIdentity);
+                data = parsed;
+                return true;
+            }
+
+            var bestError = !string.IsNullOrWhiteSpace(parseError)
+                ? parseError
+                : (!string.IsNullOrWhiteSpace(stdErr) ? stdErr.Trim() : (stdOut ?? string.Empty).Trim());
+            if (string.IsNullOrWhiteSpace(bestError))
+            {
+                bestError = "轻量批量读取失败（无可用输出）。";
+            }
+
+            _lastSshErrorByTarget[targetIdentity] = bestError;
+            Debug.WriteLine("Lightweight SSH batch failed: " + targetIdentity + " | " + bestError);
+            return false;
+        }
+
+        private List<int> BuildSshCandidateOrder(string targetIdentity, int candidateCount)
+        {
+            var result = new List<int>();
+            int preferredIndex;
+            if (_preferredSshDockerCandidateIndex.TryGetValue(targetIdentity, out preferredIndex) &&
+                preferredIndex >= 0 &&
+                preferredIndex < candidateCount)
+            {
+                result.Add(preferredIndex);
+            }
+
+            for (var i = 0; i < candidateCount; i++)
+            {
+                if (!result.Contains(i))
+                {
+                    result.Add(i);
+                }
+            }
+            return result;
+        }
+
+        private static string BuildLightweightDockerBatchScript(string dockerExecutable, bool useSudo, string password)
+        {
+            var dockerFunction = useSudo
+                ? string.Format(
+                    "docker_cmd() {{ printf '%s\\n' '{0}' | sudo -S -p '' {1} \"$@\"; }}; ",
+                    EscapeShellSingleQuoted(password),
+                    dockerExecutable)
+                : string.Format("docker_cmd() {{ {0} \"$@\"; }}; ", dockerExecutable);
+
+            return "set -e; export LC_ALL=C; " + dockerFunction +
+                   "printf '%s\\n' '" + LightweightImagesBeginMarker + "'; " +
+                   "docker_cmd image ls --no-trunc --format '{{.ID}}|{{.Repository}}|{{.Tag}}|{{.CreatedAt}}|{{.Size}}'; " +
+                   "printf '%s\\n' '" + LightweightImagesEndMarker + "' '" + LightweightStatsBeginMarker + "'; " +
+                   "docker_cmd stats --no-stream --no-trunc --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.BlockIO}}'; " +
+                   "printf '%s\\n' '" + LightweightStatsEndMarker + "' '" + LightweightInfoBeginMarker + "'; " +
+                   "info_line=$(docker_cmd info --format '{{.NCPU}}|{{.MemTotal}}|{{.DockerRootDir}}'); " +
+                   "printf '%s\\n' \"$info_line\"; " +
+                   "printf '%s\\n' '" + LightweightInfoEndMarker + "' '" + LightweightDiskBeginMarker + "'; " +
+                   "docker_root=$(printf '%s\\n' \"$info_line\" | awk -F'|' 'NR==1 {print $3}'); " +
+                   "test -n \"$docker_root\"; " +
+                   "df -P \"$docker_root\" | awk 'NR==2 {gsub(\"%\",\"\",$5); print $5}'; " +
+                   "printf '%s\\n' '" + LightweightDiskEndMarker + "' '" + LightweightCompleteMarker + "'";
+        }
+
+        private bool TryParseLightweightDockerBatchOutput(
+            string contextName,
+            string output,
+            out LightweightDockerData data,
+            out string error)
+        {
+            data = null;
+            error = string.Empty;
+            string imagesSection;
+            string statsSection;
+            string infoSection;
+            string diskSection;
+            if (!TryExtractMarkedSection(output, LightweightImagesBeginMarker, LightweightImagesEndMarker, out imagesSection) ||
+                !TryExtractMarkedSection(output, LightweightStatsBeginMarker, LightweightStatsEndMarker, out statsSection) ||
+                !TryExtractMarkedSection(output, LightweightInfoBeginMarker, LightweightInfoEndMarker, out infoSection) ||
+                !TryExtractMarkedSection(output, LightweightDiskBeginMarker, LightweightDiskEndMarker, out diskSection) ||
+                !ContainsUniqueMarker(output, LightweightCompleteMarker))
+            {
+                error = "轻量批量读取返回的分段标记不完整。";
+                return false;
+            }
+
+            var infoLine = infoSection.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            var infoParts = (infoLine ?? string.Empty).Split('|');
+            double hostCpuCores;
+            long hostMemoryTotalBytes;
+            if (infoParts.Length < 3 ||
+                !double.TryParse(infoParts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out hostCpuCores) ||
+                hostCpuCores <= 0 ||
+                !long.TryParse(infoParts[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out hostMemoryTotalBytes) ||
+                hostMemoryTotalBytes <= 0 ||
+                string.IsNullOrWhiteSpace(infoParts[2]))
+            {
+                error = "轻量批量读取返回的主机容量或 DockerRootDir 无效。";
+                return false;
+            }
+
+            double diskUsagePercent;
+            var diskLine = diskSection.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            if (!TryParseUsagePercent(diskLine, out diskUsagePercent))
+            {
+                error = "轻量批量读取返回的 Docker 磁盘使用率无效。";
+                return false;
+            }
+
+            var statsLines = statsSection.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var totalCpuPercent = 0d;
+            var totalMemoryUsedBytes = 0d;
+            for (var i = 0; i < statsLines.Length; i++)
+            {
+                var parts = statsLines[i].Split('|');
+                if (parts.Length < 5 || string.IsNullOrWhiteSpace(parts[0]))
+                {
+                    error = "轻量批量读取返回的容器汇总记录格式无效。";
+                    return false;
+                }
+                totalCpuPercent += ParsePercent(parts[1]);
+                totalMemoryUsedBytes += ExtractMemoryUsedBytes(parts[2]);
+            }
+
+            var key = (contextName ?? string.Empty).Trim();
+            _hostCpuLimitTextByContext[key] = hostCpuCores.ToString("0.##", CultureInfo.InvariantCulture);
+            _hostMemoryLimitMbByContext[key] = (int)Math.Max(
+                1,
+                Math.Min(int.MaxValue, hostMemoryTotalBytes / (1024L * 1024L)));
+            lock (_lightweightDetailCacheLock)
+            {
+                _lightweightDetailCache[key] = new LightweightDetailSnapshot(
+                    ParseDockerContainerStatsOutput(statsSection),
+                    hostCpuCores.ToString("0.##", CultureInfo.InvariantCulture),
+                    DateTime.UtcNow);
+            }
+
+            data = new LightweightDockerData(
+                ParseDockerImages(imagesSection),
+                statsLines.Length,
+                Math.Max(0, Math.Min(100, totalCpuPercent / hostCpuCores)),
+                Math.Max(0, Math.Min(100, totalMemoryUsedBytes * 100d / hostMemoryTotalBytes)),
+                diskUsagePercent);
+            return true;
+        }
+
+        private static bool TryExtractMarkedSection(string output, string beginMarker, string endMarker, out string section)
+        {
+            section = string.Empty;
+            var lines = (output ?? string.Empty).Replace("\r", string.Empty).Split('\n');
+            var beginIndexes = Enumerable.Range(0, lines.Length).Where(i => string.Equals(lines[i].Trim(), beginMarker, StringComparison.Ordinal)).ToList();
+            var endIndexes = Enumerable.Range(0, lines.Length).Where(i => string.Equals(lines[i].Trim(), endMarker, StringComparison.Ordinal)).ToList();
+            if (beginIndexes.Count != 1 || endIndexes.Count != 1 || endIndexes[0] <= beginIndexes[0])
+            {
+                return false;
+            }
+
+            section = string.Join("\n", lines.Skip(beginIndexes[0] + 1).Take(endIndexes[0] - beginIndexes[0] - 1));
+            return true;
+        }
+
+        private static bool ContainsUniqueMarker(string output, string marker)
+        {
+            return (output ?? string.Empty)
+                .Replace("\r", string.Empty)
+                .Split('\n')
+                .Count(line => string.Equals(line.Trim(), marker, StringComparison.Ordinal)) == 1;
+        }
+
         private Dictionary<string, DockerContainerStatsInfo> ReadDockerContainerStats(string contextName)
         {
             string output;
@@ -3321,8 +3844,13 @@ namespace WpfApp1
                 return new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
             }
 
+            return ParseDockerContainerStatsOutput(output);
+        }
+
+        private static Dictionary<string, DockerContainerStatsInfo> ParseDockerContainerStatsOutput(string output)
+        {
             var result = new Dictionary<string, DockerContainerStatsInfo>(StringComparer.OrdinalIgnoreCase);
-            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = (output ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < lines.Length; i++)
             {
                 var parts = lines[i].Split('|');
@@ -3595,7 +4123,7 @@ namespace WpfApp1
 
             string stdOut;
             string stdErr;
-            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr))
+            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr, "ssh-host-resource"))
             {
                 return false;
             }
@@ -3802,7 +4330,7 @@ namespace WpfApp1
 
             string stdOut;
             string stdErr;
-            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr))
+            if (!ExecuteSshRemoteCommand(user, host, password, command, 8000, out stdOut, out stdErr, "ssh-df"))
             {
                 return false;
             }
@@ -4175,16 +4703,11 @@ namespace WpfApp1
         private bool TryRunDockerCommand(string commandArgs, string contextName, out string output, int timeoutMs = 12000)
         {
             output = string.Empty;
-            var sw = Stopwatch.StartNew();
-            var route = "docker-local";
             var ok = false;
             if (!string.IsNullOrWhiteSpace(contextName) && contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 var identity = contextName.Substring(SshContextPrefix.Length).Trim();
-                route = "docker-ssh";
                 ok = TryRunDockerCommandOverSsh(identity, commandArgs, out output, timeoutMs);
-                sw.Stop();
-                AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                 return ok;
             }
 
@@ -4239,15 +4762,10 @@ namespace WpfApp1
                         Debug.WriteLine("Docker command timeout: " + args);
                         if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
                         {
-                            route = "docker-fallback-ssh";
                             ok = TryRunDockerCommandOverSsh(fallbackSshIdentity, commandArgs, out output, timeoutMs);
-                            sw.Stop();
-                            AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                             return ok;
                         }
 
-                        sw.Stop();
-                        AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, false);
                         return false;
                     }
                     string stdOut;
@@ -4266,21 +4784,14 @@ namespace WpfApp1
                         output = merged;
                         if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
                         {
-                            route = "docker-fallback-ssh";
                             ok = TryRunDockerCommandOverSsh(fallbackSshIdentity, commandArgs, out output, timeoutMs);
-                            sw.Stop();
-                            AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                             return ok;
                         }
 
-                        sw.Stop();
-                        AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, false);
                         return false;
                     }
 
                     output = stdOut;
-                    sw.Stop();
-                    AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, true);
                     return true;
                 }
             }
@@ -4289,15 +4800,10 @@ namespace WpfApp1
                 Debug.WriteLine("Docker command exception: " + ex.Message);
                 if (!string.IsNullOrWhiteSpace(fallbackSshIdentity))
                 {
-                    route = "docker-fallback-ssh";
                     ok = TryRunDockerCommandOverSsh(fallbackSshIdentity, commandArgs, out output, timeoutMs);
-                    sw.Stop();
-                    AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, ok);
                     return ok;
                 }
 
-                sw.Stop();
-                AppendReadTiming(route, contextName, commandArgs, sw.ElapsedMilliseconds, false);
                 return false;
             }
         }
@@ -4454,14 +4960,11 @@ namespace WpfApp1
         private bool TryRunDockerCommandOverSsh(string targetIdentity, string commandArgs, out string output, int timeoutMs)
         {
             output = string.Empty;
-            var sw = Stopwatch.StartNew();
             string user;
             string host;
             string password;
             if (!TryResolveSshTarget(targetIdentity, out user, out host, out password))
             {
-                sw.Stop();
-                AppendReadTiming("ssh-resolve", targetIdentity, commandArgs, sw.ElapsedMilliseconds, false);
                 return false;
             }
 
@@ -4518,14 +5021,20 @@ namespace WpfApp1
                 var i = candidateIndexes[k];
                 string stdOut;
                 string stdErr;
-                var ok = ExecuteSshRemoteCommand(user, host, password, candidates[i], effectiveTimeoutMs, out stdOut, out stdErr);
+                var ok = ExecuteSshRemoteCommand(
+                    user,
+                    host,
+                    password,
+                    candidates[i],
+                    effectiveTimeoutMs,
+                    out stdOut,
+                    out stdErr,
+                    "ssh-docker-candidate[" + i.ToString(CultureInfo.InvariantCulture) + "]");
                 if (ok)
                 {
                     output = stdOut;
                     _lastSshErrorByTarget.Remove(identity);
                     _preferredSshDockerCandidateIndex[identity] = i;
-                    sw.Stop();
-                    AppendReadTiming("ssh-candidate[" + i.ToString(CultureInfo.InvariantCulture) + "]", targetIdentity, commandArgs, sw.ElapsedMilliseconds, true);
                     return true;
                 }
 
@@ -4548,8 +5057,6 @@ namespace WpfApp1
 
             _lastSshErrorByTarget[identity] = bestErrorText;
             Debug.WriteLine("SSH docker command failed after retries: " + identity + " | " + commandArgs + " | " + bestErrorText);
-            sw.Stop();
-            AppendReadTiming("ssh-candidates", targetIdentity, commandArgs, sw.ElapsedMilliseconds, false);
             return false;
         }
 
@@ -4558,6 +5065,7 @@ namespace WpfApp1
             lock (_readTimingLock)
             {
                 _readTimingRecords.Clear();
+                _readWallClock = Stopwatch.StartNew();
                 _isCollectingReadTimings = true;
             }
         }
@@ -4567,6 +5075,10 @@ namespace WpfApp1
             lock (_readTimingLock)
             {
                 _isCollectingReadTimings = false;
+                if (_readWallClock != null && _readWallClock.IsRunning)
+                {
+                    _readWallClock.Stop();
+                }
             }
         }
 
@@ -4591,17 +5103,16 @@ namespace WpfApp1
         private string BuildReadTimingSummary()
         {
             List<ReadTimingRecord> snapshot;
+            long wallClockMs;
             lock (_readTimingLock)
             {
                 snapshot = _readTimingRecords.ToList();
-            }
-
-            if (snapshot.Count == 0)
-            {
-                return "无可用耗时数据。";
+                wallClockMs = _readWallClock == null ? 0 : _readWallClock.ElapsedMilliseconds;
             }
 
             var totalMs = snapshot.Sum(r => r.ElapsedMs);
+            var successCount = snapshot.Count(r => r.Success);
+            var failedCount = snapshot.Count - successCount;
             var top = snapshot
                 .OrderByDescending(r => r.ElapsedMs)
                 .Take(8)
@@ -4609,9 +5120,16 @@ namespace WpfApp1
 
             var lines = new List<string>
             {
-                string.Format("总命令数: {0}，累计耗时: {1} ms", snapshot.Count, totalMs),
+                string.Format("真实墙钟总耗时: {0} ms", wallClockMs),
+                string.Format("实际远程命令数: {0}（成功 {1}，失败 {2}）", snapshot.Count, successCount, failedCount),
+                string.Format("远程命令累计耗时: {0} ms", totalMs),
                 "最慢命令 Top 8:"
             };
+
+            if (top.Count == 0)
+            {
+                lines.Add("无 SSH 命令记录。");
+            }
 
             for (var i = 0; i < top.Count; i++)
             {
@@ -4678,20 +5196,15 @@ namespace WpfApp1
                 return false;
             }
 
-            var at = identity.IndexOf('@');
-            if (at <= 0 || at >= identity.Length - 1)
+            int port;
+            if (!TryParseSshTargetIdentity(identity, out user, out host, out port))
             {
                 return false;
             }
 
-            user = identity.Substring(0, at).Trim();
-            host = identity.Substring(at + 1).Trim();
-            if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(host))
-            {
-                return false;
-            }
-
-            if (!_sshPasswordByTarget.TryGetValue(identity, out password) || string.IsNullOrWhiteSpace(password))
+            host = BuildSshHostEndpoint(host, port);
+            var normalizedIdentity = BuildSshTargetIdentity(user, host);
+            if (!_sshPasswordByTarget.TryGetValue(normalizedIdentity, out password) || string.IsNullOrWhiteSpace(password))
             {
                 return false;
             }
@@ -4760,11 +5273,31 @@ namespace WpfApp1
             return (value ?? string.Empty).Replace("'", "'\"'\"'");
         }
 
-        private bool ExecuteSshRemoteCommand(string user, string host, string sshPassword, string remoteCommandRaw, int timeoutMs, out string stdOut, out string stdErr)
+        private bool ExecuteSshRemoteCommand(
+            string user,
+            string host,
+            string sshPassword,
+            string remoteCommandRaw,
+            int timeoutMs,
+            out string stdOut,
+            out string stdErr,
+            string timingRoute = "ssh",
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             stdOut = string.Empty;
             stdErr = string.Empty;
 
+            string sshHost;
+            int sshPort;
+            if (!TryParseSshHostEndpoint(host, out sshHost, out sshPort))
+            {
+                stdErr = "SSH 主机地址无效。";
+                return false;
+            }
+
+            var timingContext = BuildSshTargetIdentity(user, sshHost, sshPort);
+            var timingCommand = SanitizeReadTimingCommand(remoteCommandRaw, sshPassword);
+            var timingStopwatch = Stopwatch.StartNew();
             var remoteCommand = (remoteCommandRaw ?? string.Empty).Replace("\"", "\\\"");
             var sshExecutable = ResolveSshExecutablePath();
             if (string.IsNullOrWhiteSpace(sshExecutable))
@@ -4777,9 +5310,10 @@ namespace WpfApp1
             {
                 File.WriteAllText(askPassFile, "@echo off\r\necho " + sshPassword + "\r\n", new System.Text.UTF8Encoding(false));
                 var commonArgs = string.Format(
-                    "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
+                    "-p {0} -o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {1}@{2} \"{3}\"",
+                    sshPort,
                     user,
-                    host,
+                    sshHost,
                     remoteCommand);
 
                 // First try: SSH_ASKPASS mode
@@ -4801,27 +5335,71 @@ namespace WpfApp1
                     if (process == null)
                     {
                         stdErr = "无法启动 ssh 进程（ASKPASS）。";
-                        return TryExecuteSshWithStdinPassword(sshExecutable, commonArgs, sshPassword, timeoutMs, out stdOut, out stdErr);
+                        var fallbackOk = TryExecuteSshWithStdinPassword(
+                            sshExecutable,
+                            commonArgs,
+                            sshPassword,
+                            timeoutMs,
+                            out stdOut,
+                            out stdErr,
+                            cancellationToken);
+                        timingStopwatch.Stop();
+                        AppendReadTiming(timingRoute + "-stdin-fallback", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                        return fallbackOk;
                     }
 
                     var stdOutTask = process.StandardOutput.ReadToEndAsync();
                     var stdErrTask = process.StandardError.ReadToEndAsync();
-                    if (!process.WaitForExit(timeoutMs))
+                    using (cancellationToken.Register(() =>
                     {
-                        try { process.Kill(); } catch { }
-                        Debug.WriteLine("SSH remote command timeout: " + user + "@" + host + " | " + remoteCommandRaw);
-                        stdErr = "SSH 执行超时（ASKPASS 模式）。";
-                        return false;
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                    }))
+                    {
+                        if (!process.WaitForExit(timeoutMs))
+                        {
+                            try { process.Kill(); } catch { }
+                            Debug.WriteLine("SSH remote command timeout: " + BuildSshTargetIdentity(user, sshHost, sshPort) + " | " + timingCommand);
+                            stdErr = "SSH 执行超时（ASKPASS 模式）。";
+                            timingStopwatch.Stop();
+                            AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
+                            return false;
+                        }
                     }
 
                     CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
 
-                    if (process.ExitCode != 0)
+                    if (cancellationToken.IsCancellationRequested)
                     {
-                        // fallback to stdin password mode
-                        return TryExecuteSshWithStdinPassword(sshExecutable, commonArgs, sshPassword, timeoutMs, out stdOut, out stdErr);
+                        stdErr = "SSH 后台只读查询已取消。";
+                        timingStopwatch.Stop();
+                        AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
+                        return false;
                     }
 
+                    if (process.ExitCode != 0)
+                    {
+                        if (ShouldRetrySshWithStdinPassword(stdOut, stdErr))
+                        {
+                            var fallbackOk = TryExecuteSshWithStdinPassword(
+                                sshExecutable,
+                                commonArgs,
+                                sshPassword,
+                                timeoutMs,
+                                out stdOut,
+                                out stdErr,
+                                cancellationToken);
+                            timingStopwatch.Stop();
+                            AppendReadTiming(timingRoute + "-askpass+stdin", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                            return fallbackOk;
+                        }
+
+                        timingStopwatch.Stop();
+                        AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, false);
+                        return false;
+                    }
+
+                    timingStopwatch.Stop();
+                    AppendReadTiming(timingRoute + "-askpass", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, true);
                     return true;
                 }
             }
@@ -4829,17 +5407,22 @@ namespace WpfApp1
             {
                 Debug.WriteLine("SSH remote command exception: " + ex.Message);
                 stdErr = "SSH 执行异常: " + ex.Message;
-                return TryExecuteSshWithStdinPassword(
+                var fallbackOk = TryExecuteSshWithStdinPassword(
                     sshExecutable,
                     string.Format(
-                        "-o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {0}@{1} \"{2}\"",
+                        "-p {0} -o BatchMode=no -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=5 -o ConnectionAttempts=1 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL {1}@{2} \"{3}\"",
+                        sshPort,
                         user,
-                        host,
+                        sshHost,
                         remoteCommand),
                     sshPassword,
                     timeoutMs,
                     out stdOut,
-                    out stdErr);
+                    out stdErr,
+                    cancellationToken);
+                timingStopwatch.Stop();
+                AppendReadTiming(timingRoute + "-stdin-fallback", timingContext, timingCommand, timingStopwatch.ElapsedMilliseconds, fallbackOk);
+                return fallbackOk;
             }
             finally
             {
@@ -4909,7 +5492,14 @@ namespace WpfApp1
             return "ssh";
         }
 
-        private bool TryExecuteSshWithStdinPassword(string sshExecutable, string commonArgs, string sshPassword, int timeoutMs, out string stdOut, out string stdErr)
+        private bool TryExecuteSshWithStdinPassword(
+            string sshExecutable,
+            string commonArgs,
+            string sshPassword,
+            int timeoutMs,
+            out string stdOut,
+            out string stdErr,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             stdOut = string.Empty;
             stdErr = string.Empty;
@@ -4940,16 +5530,29 @@ namespace WpfApp1
 
                     var stdOutTask = process.StandardOutput.ReadToEndAsync();
                     var stdErrTask = process.StandardError.ReadToEndAsync();
-                    if (!process.WaitForExit(timeoutMs))
+                    using (cancellationToken.Register(() =>
                     {
-                        try { process.Kill(); } catch { }
-                        stdErr = string.IsNullOrWhiteSpace(stdErr) ? "SSH 执行超时（STDIN 模式）。" : stdErr;
-                        return false;
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                    }))
+                    {
+                        if (!process.WaitForExit(timeoutMs))
+                        {
+                            try { process.Kill(); } catch { }
+                            stdErr = string.IsNullOrWhiteSpace(stdErr) ? "SSH 执行超时（STDIN 模式）。" : stdErr;
+                            return false;
+                        }
                     }
 
                     CollectProcessStreams(stdOutTask, stdErrTask, 3000, out stdOut, out stdErr);
 
-                    return process.ExitCode == 0;
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        stdErr = "SSH 后台只读查询已取消。";
+                        return false;
+                    }
+
+                    var ok = process.ExitCode == 0;
+                    return ok;
                 }
             }
             catch (Exception ex)
@@ -4957,6 +5560,23 @@ namespace WpfApp1
                 stdErr = "SSH STDIN 模式异常: " + ex.Message;
                 return false;
             }
+        }
+
+        private static string SanitizeReadTimingCommand(string command, string password)
+        {
+            var value = command ?? string.Empty;
+            if (value.IndexOf(LightweightImagesBeginMarker, StringComparison.Ordinal) >= 0 ||
+                value.IndexOf(LightweightCompleteMarker, StringComparison.Ordinal) >= 0)
+            {
+                return "lightweight-batch";
+            }
+
+            if (!string.IsNullOrEmpty(password))
+            {
+                value = value.Replace(password, "***");
+                value = value.Replace(EscapeShellSingleQuoted(password), "***");
+            }
+            return value;
         }
 
         private async Task RefreshDeviceImageRowsFastAsync(string selectedDeviceName)
@@ -5273,6 +5893,7 @@ namespace WpfApp1
 
         private async void ContainerDeviceSelector_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            CancelAllContainerBackgroundRefreshes();
             var selectedDeviceName = GetSelectedContainerDeviceName();
             BindContainerRows(selectedDeviceName);
 
@@ -5281,44 +5902,29 @@ namespace WpfApp1
                 return;
             }
 
-            var contextName = GetSelectedContainerContextName();
-            if (string.IsNullOrWhiteSpace(contextName))
-            {
-                return;
-            }
-
-            Window progressWindow = null;
             try
             {
-                progressWindow = ShowContainerLoadingWindowIfActive("正在刷新容器列表与资源指标...");
-                if (progressWindow == null)
-                {
-                    return;
-                }
-                await Dispatcher.Yield(DispatcherPriority.Background);
-                await RefreshContainerRowsForContextAsync(contextName);
+                await RefreshSelectedContainerDeviceAsync();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine("Refresh container rows on device switch failed: " + ex.Message);
             }
-            finally
+        }
+
+        private static bool ShouldRetrySshWithStdinPassword(string stdOut, string stdErr)
+        {
+            if (!string.IsNullOrWhiteSpace(stdOut))
             {
-                if (progressWindow != null)
-                {
-                    try
-                    {
-                        progressWindow.Close();
-                        if (ReferenceEquals(_containerLoadingWindow, progressWindow))
-                        {
-                            _containerLoadingWindow = null;
-                        }
-                    }
-                    catch
-                    {
-                    }
-                }
+                return false;
             }
+
+            var error = (stdErr ?? string.Empty).ToLowerInvariant();
+            return error.Contains("askpass") ||
+                   error.Contains("no tty present") ||
+                   error.Contains("unable to read password") ||
+                   error.Contains("authentication failed") ||
+                   error.Contains("permission denied (publickey,password");
         }
 
         private void BindContainerRows(string deviceName)
@@ -5342,13 +5948,9 @@ namespace WpfApp1
                 return;
             }
 
-            if (_isContainerActionRunning)
-            {
-                return;
-            }
-
-            _isContainerActionRunning = true;
-            SetContainerActionButtonsEnabled(false);
+            var lockedContainerIds = new List<string>();
+            var skippedContainerCount = 0;
+            var forceDeleteContainers = false;
             Window progressWindow = null;
             TextBlock progressText = null;
             TextBlock progressStageText = null;
@@ -5372,6 +5974,97 @@ namespace WpfApp1
 
                 var selectedRow = selectedRows.FirstOrDefault();
 
+                var targetsSelectedContainers =
+                    action == "启动容器" ||
+                    action == "停止容器" ||
+                    action == "删除容器" ||
+                    action == "模型部署" ||
+                    action == "算法部署";
+                var defersValidationUntilAfterDialog = action == "创建容器" || action == "压力测试";
+                if (action != "查看日志" && !defersValidationUntilAfterDialog)
+                {
+                    var rowsToConfirm = targetsSelectedContainers ? selectedRows : new List<ContainerComposeRow>();
+                    if (!await ConfirmContainerOperationAsync(contextName, rowsToConfirm))
+                    {
+                        return;
+                    }
+
+                    if (action == "启动容器" || action == "停止容器" || action == "删除容器")
+                    {
+                        if (selectedRows.Count == 0)
+                        {
+                            MessageBox.Show(this, "请至少选中一行容器。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                            return;
+                        }
+
+                        selectedRows = selectedRows
+                            .Select(row => _containerRows.FirstOrDefault(current => IsContainerMatch(current, row.FullId)))
+                            .Where(row => row != null)
+                            .ToList();
+                        if (selectedRows.Count == 0)
+                        {
+                            MessageBox.Show(this, "所选容器已不存在，请刷新后重试。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            return;
+                        }
+
+                        if (action == "启动容器")
+                        {
+                            var actionableRows = selectedRows.Where(row => !IsContainerActiveForOperation(row)).ToList();
+                            skippedContainerCount = selectedRows.Count - actionableRows.Count;
+                            selectedRows = actionableRows;
+                            if (selectedRows.Count == 0)
+                            {
+                                MessageBox.Show(this, "所选容器均已处于运行状态，无需再次启动。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                                return;
+                            }
+                        }
+                        else if (action == "停止容器")
+                        {
+                            var actionableRows = selectedRows.Where(IsContainerActiveForOperation).ToList();
+                            skippedContainerCount = selectedRows.Count - actionableRows.Count;
+                            selectedRows = actionableRows;
+                            if (selectedRows.Count == 0)
+                            {
+                                MessageBox.Show(this, "所选容器均未运行，无需停止。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            forceDeleteContainers = selectedRows.Any(IsContainerActiveForOperation);
+                            var previewLines = selectedRows
+                                .Take(8)
+                                .Select(row => string.Format("• {0}（{1}）", (row.Name ?? row.Id).TrimStart('/'), row.Status))
+                                .ToList();
+                            if (selectedRows.Count > previewLines.Count)
+                            {
+                                previewLines.Add(string.Format("……另有 {0} 个容器", selectedRows.Count - previewLines.Count));
+                            }
+
+                            var deleteWarning = forceDeleteContainers
+                                ? string.Format("其中有 {0} 个容器仍在运行，将使用 docker rm -f 强制终止并删除。", selectedRows.Count(IsContainerActiveForOperation))
+                                : "所选容器均未运行，将使用 docker rm 删除。";
+                            var confirmText = string.Format(
+                                "即将删除 {0} 个容器：\n\n{1}\n\n{2}\n镜像、宿主机挂载目录和 Docker 卷不会被删除。\n\n是否继续？",
+                                selectedRows.Count,
+                                string.Join(Environment.NewLine, previewLines),
+                                deleteWarning);
+                            if (MessageBox.Show(this, confirmText, "确认删除容器", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                            {
+                                return;
+                            }
+                        }
+
+                        selectedRow = selectedRows.FirstOrDefault();
+                    }
+
+                    if (targetsSelectedContainers && selectedRows.Count > 0 && !TryLockContainerRows(selectedRows, out lockedContainerIds))
+                    {
+                        MessageBox.Show(this, "所选容器正在执行其他操作，请稍后重试。", "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
+                        return;
+                    }
+                }
+
                 if (action == "压力测试")
                 {
                     var deviceName = GetSelectedContainerDeviceName();
@@ -5384,6 +6077,11 @@ namespace WpfApp1
 
                     var request = ShowContainerStressTestDialog(imageCandidates);
                     if (request == null)
+                    {
+                        return;
+                    }
+
+                    if (!await ConfirmContainerOperationAsync(contextName, new List<ContainerComposeRow>()))
                     {
                         return;
                     }
@@ -5409,8 +6107,22 @@ namespace WpfApp1
                         return;
                     }
 
+                    if (!await ConfirmContainerOperationAsync(contextName, new List<ContainerComposeRow>()))
+                    {
+                        return;
+                    }
+
+                    var imageStartupInfo = await Task.Run(() => ReadImageStartupInfo(contextName, request.Image));
+                    var usesPosixShell = contextName.StartsWith(SshContextPrefix, StringComparison.OrdinalIgnoreCase);
+                    var createCommand = ShowCreateContainerCommandDialog(
+                        BuildCreateContainerCommand(request, imageStartupInfo.CommandArguments, usesPosixShell),
+                        imageStartupInfo);
+                    if (string.IsNullOrWhiteSpace(createCommand))
+                    {
+                        return;
+                    }
+
                     var createOut = string.Empty;
-                    var createCommand = BuildCreateContainerCommand(request);
                     var resolveIdCommand = string.Format("ps -a --no-trunc --filter \"name=^{0}$\" --format \"{{{{.ID}}}}\"", request.ContainerName);
                     var inspectLimitCommand = "container inspect <containerId> --format \"{{.HostConfig.NanoCpus}}|{{.HostConfig.Memory}}|{{.HostConfig.CpuQuota}}|{{.HostConfig.CpuPeriod}}|{{.HostConfig.CpusetCpus}}\"";
                     progressStageText = new TextBlock
@@ -5619,7 +6331,8 @@ namespace WpfApp1
                         createdRow == null ? "-" : createdRow.DiskReadWrite,
                         string.Empty,
                         createdContainerId ?? (createdRow == null ? string.Empty : createdRow.FullId),
-                        createdRow == null ? "-" : createdRow.Size);
+                        createdRow == null ? "-" : createdRow.Size,
+                        createdRow == null ? "-" : createdRow.Command);
                     if (!string.IsNullOrWhiteSpace(createdContainerId))
                     {
                         if (progressBar != null)
@@ -5630,7 +6343,7 @@ namespace WpfApp1
                         {
                             progressStageText.Text = "阶段：补查新容器运行指标";
                         }
-                        SetProgressText(progressText, "正在补查新容器指标：docker ps -a --size / docker stats");
+                SetProgressText(progressText, "正在补查新容器指标：docker ps -a / docker stats");
 
                         var latestInfo = await Task.Run(() => ReadSingleContainerInfo(contextName, createdContainerId, request.ContainerName));
                         var latestStats = await Task.Run(() => ReadSingleContainerStatsInfo(contextName, createdContainerId));
@@ -5652,7 +6365,8 @@ namespace WpfApp1
                             latestStats == null ? "-" : latestStats.BlockIoText,
                             latestInfo == null ? string.Empty : latestInfo.Status,
                             createdContainerId,
-                            latestInfo == null ? "-" : latestInfo.Size);
+                            latestInfo == null ? "-" : latestInfo.Size,
+                            latestInfo == null ? createdLogRow.Command : latestInfo.Command);
                     }
                     AppendContainerOperationCsvByDeviceName(
                         selectedDeviceNameForCreate,
@@ -5745,7 +6459,7 @@ namespace WpfApp1
                 }
 
                 var containerIds = selectedRows
-                    .Select(r => string.IsNullOrWhiteSpace(r.FullId) ? r.Id : r.FullId)
+                    .Select(r => r.FullId)
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -5764,10 +6478,10 @@ namespace WpfApp1
                         dockerActionCommand = "start " + quotedIds;
                         break;
                     case "停止容器":
-                        dockerActionCommand = "stop " + quotedIds;
+                        dockerActionCommand = "stop --time 10 " + quotedIds;
                         break;
                     case "删除容器":
-                        dockerActionCommand = "rm -f " + quotedIds;
+                        dockerActionCommand = (forceDeleteContainers ? "rm -f " : "rm ") + quotedIds;
                         break;
                     default:
                         MessageBox.Show(this, string.Format("暂不支持的操作：{0}", action), "容器编排", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -5838,26 +6552,16 @@ namespace WpfApp1
                 {
                     progressStageText.Text = "阶段：执行启动命令";
                 }
-                var actionCommandTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase) ? 60000 : 12000;
+                var actionCommandTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase) ? 60000 : 30000;
                 var actionOk = await Task.Run(() => TryRunDockerCommand(dockerActionCommand, contextName, out actionOut, actionCommandTimeoutMs));
-                if (!actionOk)
-                {
-                    for (var i = 0; i < selectedRows.Count; i++)
-                    {
-                        var row = selectedRows[i];
-                        var id = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
-                        AddContainerOperationLog(contextName, action, id, row.Name, "失败", string.IsNullOrWhiteSpace(actionOut) ? "命令执行失败。" : actionOut.Trim());
-                    }
-                    CloseWindowQuietly(ref progressWindow);
-                    MessageBox.Show(this, string.Format("{0}失败。", action), "容器编排", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
 
                 _lastOperatedContextName = contextName;
                 _lastOperatedContainerId = containerIds[0];
                 _lastOperatedContainerName = selectedRows[0].Name;
 
-                var waitTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase) ? 90000 : 5000;
+                var waitTimeoutMs = string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase)
+                    ? (actionOk ? 90000 : 20000)
+                    : 20000;
                 if (progressBar != null)
                 {
                     progressBar.Value = 80;
@@ -5868,7 +6572,7 @@ namespace WpfApp1
                 }
                 if (string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase))
                 {
-                    SetProgressText(progressText, "命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约90秒）");
+                    SetProgressText(progressText, string.Format("命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约{0}秒）", waitTimeoutMs / 1000));
                 }
                 else
                 {
@@ -5892,29 +6596,16 @@ namespace WpfApp1
                         SetProgressText(
                             progressText,
                             string.Format(
-                                "命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约90秒）\n已等待：{0}s",
+                                "命令已提交，后台等待容器就绪...\n正在轮询容器状态（最多约{0}秒）\n已等待：{1}s",
+                                waitTimeoutMs / 1000,
                                 Math.Max(1, (int)statusStopwatch.Elapsed.TotalSeconds)));
                     }
                 };
                 statusHeartbeat.Start();
-                var opVisible = await WaitForContainerRowsAsync(contextName, rows =>
-                {
-                    switch (action)
-                    {
-                        case "启动容器":
-                            return containerIds.All(id => rows.Any(r =>
-                                IsContainerMatch(r, id) &&
-                                string.Equals(r.Status, "running", StringComparison.OrdinalIgnoreCase)));
-                        case "停止容器":
-                            return containerIds.All(id => rows.Any(r =>
-                                IsContainerMatch(r, id) &&
-                                !string.Equals(r.Status, "running", StringComparison.OrdinalIgnoreCase)));
-                        case "删除容器":
-                            return containerIds.All(id => rows.All(r => !IsContainerMatch(r, id)));
-                        default:
-                            return true;
-                    }
-                }, timeoutMs: waitTimeoutMs);
+                await WaitForContainerRowsAsync(
+                    contextName,
+                    rows => containerIds.All(id => IsContainerActionSatisfied(action, id, rows)),
+                    timeoutMs: waitTimeoutMs);
                 statusHeartbeat.Stop();
 
                 if (progressBar != null)
@@ -5925,46 +6616,86 @@ namespace WpfApp1
                 {
                     progressStageText.Text = "阶段：刷新界面";
                 }
-                SetProgressText(progressText, string.Format("{0}完成，正在刷新界面...", actionVerb));
+                SetProgressText(progressText, string.Format("{0}命令已完成，正在核对每个容器的实际状态...", actionVerb));
+                var currentRows = _containerRows
+                    .Where(row => string.Equals(GetContainerContextNameByDevice(row.DeviceName), contextName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                var successfulRows = selectedRows
+                    .Where(row => IsContainerActionSatisfied(action, row.FullId, currentRows))
+                    .ToList();
+                var unresolvedRows = selectedRows
+                    .Where(row => !IsContainerActionSatisfied(action, row.FullId, currentRows))
+                    .ToList();
                 for (var i = 0; i < selectedRows.Count; i++)
                 {
                     var row = selectedRows[i];
-                    var id = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+                    var id = row.FullId;
+                    var stateConfirmed = successfulRows.Any(successfulRow => IsContainerMatch(successfulRow, id));
+                    var operationResult = stateConfirmed
+                        ? "成功"
+                        : (actionOk ? "命令成功，状态待确认" : "失败或状态待确认");
+                    var operationDetail = string.IsNullOrWhiteSpace(actionOut) ? string.Empty : actionOut.Trim();
+                    if (!stateConfirmed)
+                    {
+                        var stateMessage = actionOk
+                            ? "命令已执行，但未在预期时间内确认目标状态。"
+                            : "命令返回失败，且未确认目标状态。";
+                        operationDetail = string.IsNullOrWhiteSpace(operationDetail)
+                            ? stateMessage
+                            : stateMessage + Environment.NewLine + operationDetail;
+                    }
+                    else if (!actionOk)
+                    {
+                        operationDetail = string.IsNullOrWhiteSpace(operationDetail)
+                            ? "命令返回异常，但已确认实际状态符合预期。"
+                            : "命令返回异常，但已确认实际状态符合预期。" + Environment.NewLine + operationDetail;
+                    }
+
                     AddContainerOperationLog(
                         contextName,
                         action,
                         id,
                         row.Name,
-                        opVisible ? "成功" : "命令成功，待确认",
-                        string.IsNullOrWhiteSpace(actionOut) ? string.Empty : actionOut.Trim());
-                    AppendContainerOperationCsvByDeviceName(
-                        string.IsNullOrWhiteSpace(row.DeviceName) ? GetSelectedContainerDeviceName() : row.DeviceName,
-                        action,
-                        BuildContainerCsvLogRow(row, action));
-                }
-                if (string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase))
-                {
-                    CloseWindowQuietly(ref progressWindow);
-                    MessageBox.Show(
-                        this,
-                        opVisible
-                            ? string.Format("{0}成功，共处理 {1} 个容器。", action, containerIds.Count)
-                            : string.Format("{0}未在预期时间内完成，请检查容器日志和镜像配置。", action),
-                        "容器编排",
-                        MessageBoxButton.OK,
-                        opVisible ? MessageBoxImage.Information : MessageBoxImage.Warning);
-                    return;
+                        operationResult,
+                        operationDetail);
+                    if (stateConfirmed)
+                    {
+                        AppendContainerOperationCsvByDeviceName(
+                            string.IsNullOrWhiteSpace(row.DeviceName) ? GetSelectedContainerDeviceName() : row.DeviceName,
+                            action,
+                            BuildContainerCsvLogRow(row, action));
+                    }
                 }
 
+                await RefreshFullContainerRowsForContextAsync(contextName);
                 CloseWindowQuietly(ref progressWindow);
+                var summaryText = string.Format(
+                    "{0}完成：成功 {1} 个，未确认 {2} 个",
+                    action,
+                    successfulRows.Count,
+                    unresolvedRows.Count);
+                if (skippedContainerCount > 0)
+                {
+                    summaryText += string.Format("，已跳过 {0} 个无需操作的容器", skippedContainerCount);
+                }
+                summaryText += "。";
+                if (unresolvedRows.Count > 0)
+                {
+                    var unresolvedNames = string.Join("、", unresolvedRows
+                        .Take(8)
+                        .Select(row => (row.Name ?? row.Id).TrimStart('/')));
+                    summaryText += Environment.NewLine + "未确认：" + unresolvedNames;
+                    if (string.Equals(action, "启动容器", StringComparison.OrdinalIgnoreCase))
+                    {
+                        summaryText += Environment.NewLine + "请检查容器日志和镜像启动配置。";
+                    }
+                }
                 MessageBox.Show(
                     this,
-                    opVisible
-                        ? string.Format("{0}成功，共处理 {1} 个容器。", action, containerIds.Count)
-                        : string.Format("{0}命令执行成功，但列表刷新稍慢，请稍后查看。", action),
+                    summaryText,
                     "容器编排",
                     MessageBoxButton.OK,
-                    opVisible ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                    unresolvedRows.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
             }
             catch (Exception ex)
             {
@@ -5983,8 +6714,8 @@ namespace WpfApp1
                     {
                     }
                 }
-                _isContainerActionRunning = false;
-                SetContainerActionButtonsEnabled(true);
+                UnlockContainerRows(lockedContainerIds);
+                UpdateContainerActionAvailability();
                 RestoreMainWindowFocus();
             }
         }
@@ -6006,6 +6737,42 @@ namespace WpfApp1
             finally
             {
                 window = null;
+            }
+        }
+
+        private static bool IsContainerActiveForOperation(ContainerComposeRow row)
+        {
+            if (row == null)
+            {
+                return false;
+            }
+
+            if (string.Equals(row.Status, "running", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var detail = (row.Detail ?? string.Empty).Trim();
+            return detail.StartsWith("Up", StringComparison.OrdinalIgnoreCase) ||
+                   detail.StartsWith("Restarting", StringComparison.OrdinalIgnoreCase) ||
+                   detail.StartsWith("Paused", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsContainerActionSatisfied(string action, string containerId, IList<ContainerComposeRow> rows)
+        {
+            var matchedRow = (rows ?? new List<ContainerComposeRow>())
+                .FirstOrDefault(row => IsContainerMatch(row, containerId));
+            switch (action)
+            {
+                case "启动容器":
+                    return matchedRow != null &&
+                           string.Equals(matchedRow.Status, "running", StringComparison.OrdinalIgnoreCase);
+                case "停止容器":
+                    return matchedRow != null && !IsContainerActiveForOperation(matchedRow);
+                case "删除容器":
+                    return matchedRow == null;
+                default:
+                    return true;
             }
         }
 
@@ -6082,7 +6849,8 @@ namespace WpfApp1
                 var actionButton = child as Button;
                 if (actionButton != null)
                 {
-                    actionButton.IsEnabled = enabled;
+                    var action = actionButton.Content as string ?? string.Empty;
+                    actionButton.IsEnabled = enabled || string.Equals(action, "查看日志", StringComparison.OrdinalIgnoreCase);
                 }
             }
         }
@@ -6133,6 +6901,131 @@ namespace WpfApp1
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private ImageStartupInfo ReadImageStartupInfo(string contextName, string image)
+        {
+            if (string.IsNullOrWhiteSpace(image))
+            {
+                return ImageStartupInfo.Failed("镜像名称为空。");
+            }
+
+            string output;
+            var command = string.Format(
+                "image inspect \"{0}\" --format \"{{{{json .Config.Entrypoint}}}}\t{{{{json .Config.Cmd}}}}\"",
+                image);
+            if (!TryRunDockerCommand(command, contextName, out output))
+            {
+                return ImageStartupInfo.Failed(BuildImageStartupReadError(output));
+            }
+
+            var raw = (output ?? string.Empty).Trim();
+            var parts = raw.Split(new[] { '\t' }, 2);
+            List<string> entrypointArguments;
+            List<string> commandArguments;
+            if (parts.Length != 2 ||
+                !TryParseDockerJsonStringArray(parts[0], out entrypointArguments) ||
+                !TryParseDockerJsonStringArray(parts[1], out commandArguments))
+            {
+                return ImageStartupInfo.Failed("镜像启动配置返回格式无法解析。");
+            }
+
+            return ImageStartupInfo.Succeeded(entrypointArguments, commandArguments);
+        }
+
+        private static string BuildImageStartupReadError(string output)
+        {
+            var detail = (output ?? string.Empty)
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Trim();
+            if (string.IsNullOrWhiteSpace(detail))
+            {
+                return "无法读取镜像启动配置。";
+            }
+
+            if (detail.Length > 180)
+            {
+                detail = detail.Substring(0, 180) + "...";
+            }
+
+            return "无法读取镜像启动配置：" + detail;
+        }
+
+        private static bool TryParseDockerJsonStringArray(string json, out List<string> values)
+        {
+            values = new List<string>();
+            var raw = (json ?? string.Empty).Trim();
+            if (string.Equals(raw, "null", StringComparison.OrdinalIgnoreCase) || raw == "[]")
+            {
+                return true;
+            }
+
+            if (!raw.StartsWith("[", StringComparison.Ordinal) || !raw.EndsWith("]", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var matches = Regex.Matches(raw, "\"(?<value>(?:\\\\.|[^\"\\\\])*)\"");
+            if (matches.Count == 0)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < matches.Count; i++)
+            {
+                values.Add(DecodeDockerJsonString(matches[i].Groups["value"].Value));
+            }
+
+            return true;
+        }
+
+        private static string DecodeDockerJsonString(string value)
+        {
+            var text = value ?? string.Empty;
+            var decoded = new StringBuilder(text.Length);
+            for (var i = 0; i < text.Length; i++)
+            {
+                var ch = text[i];
+                if (ch != '\\' || i + 1 >= text.Length)
+                {
+                    decoded.Append(ch);
+                    continue;
+                }
+
+                var escaped = text[++i];
+                switch (escaped)
+                {
+                    case '\"': decoded.Append('\"'); break;
+                    case '\\': decoded.Append('\\'); break;
+                    case '/': decoded.Append('/'); break;
+                    case 'b': decoded.Append('\b'); break;
+                    case 'f': decoded.Append('\f'); break;
+                    case 'n': decoded.Append('\n'); break;
+                    case 'r': decoded.Append('\r'); break;
+                    case 't': decoded.Append('\t'); break;
+                    case 'u':
+                        if (i + 4 < text.Length)
+                        {
+                            int codePoint;
+                            var hex = text.Substring(i + 1, 4);
+                            if (int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out codePoint))
+                            {
+                                decoded.Append((char)codePoint);
+                                i += 4;
+                                break;
+                            }
+                        }
+
+                        decoded.Append('u');
+                        break;
+                    default:
+                        decoded.Append(escaped);
+                        break;
+                }
+            }
+
+            return decoded.ToString();
         }
 
         private static bool IsCassImage(string image)
@@ -6936,7 +7829,7 @@ namespace WpfApp1
                     await CleanupStressTestContainersAsync(contextName, createdNames);
                 }
 
-                await RefreshContainerRowsForContextAsync(contextName);
+                await RefreshFullContainerRowsForContextAsync(contextName);
                 CloseWindowQuietly(ref progressWindow);
 
                 var detail = failed
@@ -7002,9 +7895,14 @@ namespace WpfApp1
 
         private async Task CleanupStressTestContainersAsync(string contextName, List<string> containerNames)
         {
-            for (var i = 0; i < containerNames.Count; i += 50)
+            var containerIds = (containerNames ?? new List<string>())
+                .Select(name => ResolveContainerIdByName(contextName, name))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var i = 0; i < containerIds.Count; i += 50)
             {
-                var chunk = containerNames.Skip(i).Take(50).Select(n => string.Format("\"{0}\"", n)).ToList();
+                var chunk = containerIds.Skip(i).Take(50).Select(id => string.Format("\"{0}\"", id)).ToList();
                 if (chunk.Count == 0)
                 {
                     continue;
@@ -7016,7 +7914,196 @@ namespace WpfApp1
             }
         }
 
-        private static string BuildCreateContainerCommand(CreateContainerRequest request)
+        private string ShowCreateContainerCommandDialog(string commandArgs, ImageStartupInfo startupInfo)
+        {
+            startupInfo = startupInfo ?? ImageStartupInfo.Failed("未获取到镜像启动配置。");
+            var commandBox = new TextBox
+            {
+                Text = "docker " + (commandArgs ?? string.Empty).Trim(),
+                Height = 160,
+                AcceptsReturn = true,
+                AcceptsTab = true,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 14,
+                Padding = new Thickness(10)
+            };
+
+            var panel = new StackPanel
+            {
+                Width = 720,
+                Margin = new Thickness(0, 20, 0, 10),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "确认创建容器命令",
+                FontSize = 22,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(30, 41, 59)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            var startupHasWarning = !startupInfo.ReadSucceeded ||
+                                    (startupInfo.EntrypointArguments.Count == 0 && startupInfo.CommandArguments.Count == 0);
+            panel.Children.Add(new TextBlock
+            {
+                Text = "镜像启动配置",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(51, 65, 85)),
+                Margin = new Thickness(0, 0, 0, 6)
+            });
+            panel.Children.Add(new TextBox
+            {
+                Text = BuildImageStartupSummary(startupInfo),
+                Height = 92,
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 13,
+                Padding = new Thickness(8),
+                Background = new SolidColorBrush(startupHasWarning ? Color.FromRgb(255, 247, 237) : Color.FromRgb(248, 250, 252)),
+                Foreground = new SolidColorBrush(startupHasWarning ? Color.FromRgb(154, 52, 18) : Color.FromRgb(51, 65, 85)),
+                BorderBrush = new SolidColorBrush(startupHasWarning ? Color.FromRgb(253, 186, 116) : Color.FromRgb(203, 213, 225)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = "以下命令即将在当前设备上执行。读取到的默认 CMD 已追加在镜像名后；你可以修改或补充启动命令，请保留 docker create 命令前缀。",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Color.FromRgb(71, 85, 105)),
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            panel.Children.Add(commandBox);
+
+            var confirmButton = new Button
+            {
+                Content = "确认并执行",
+                Width = 110,
+                Height = 34,
+                Margin = new Thickness(0, 0, 8, 0),
+                IsDefault = true
+            };
+            var cancelButton = new Button
+            {
+                Content = "取消",
+                Width = 86,
+                Height = 34,
+                Margin = new Thickness(0),
+                IsCancel = true
+            };
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            buttonPanel.Children.Add(confirmButton);
+            buttonPanel.Children.Add(cancelButton);
+
+            var buttonHost = new Grid
+            {
+                Width = 720,
+                Height = 50,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            buttonPanel.VerticalAlignment = VerticalAlignment.Top;
+            buttonHost.Children.Add(buttonPanel);
+
+            var contentScroll = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = panel
+            };
+            var rootPanel = new DockPanel();
+            DockPanel.SetDock(buttonHost, Dock.Bottom);
+            rootPanel.Children.Add(buttonHost);
+            rootPanel.Children.Add(contentScroll);
+
+            var dialog = new Window
+            {
+                Title = "确认创建容器命令",
+                Width = 800,
+                Height = 540,
+                MinWidth = 780,
+                MinHeight = 460,
+                ResizeMode = ResizeMode.CanResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Content = rootPanel
+            };
+
+            string editedCommandArgs = null;
+            confirmButton.Click += (_, __) =>
+            {
+                var fullCommand = (commandBox.Text ?? string.Empty)
+                    .Replace("\r", " ")
+                    .Replace("\n", " ")
+                    .Trim();
+                var match = Regex.Match(fullCommand, @"^docker(?:\.exe)?\s+(create(?:\s|$).*)$", RegexOptions.IgnoreCase);
+                if (!match.Success)
+                {
+                    MessageBox.Show(
+                        dialog,
+                        "请输入有效的 docker create 命令，并保留命令前缀。",
+                        "确认创建容器命令",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                editedCommandArgs = match.Groups[1].Value.Trim();
+                dialog.DialogResult = true;
+            };
+            dialog.Loaded += (_, __) =>
+            {
+                commandBox.Focus();
+                commandBox.CaretIndex = commandBox.Text.Length;
+            };
+
+            return dialog.ShowDialog() == true ? editedCommandArgs : null;
+        }
+
+        private static string BuildImageStartupSummary(ImageStartupInfo startupInfo)
+        {
+            if (!startupInfo.ReadSucceeded)
+            {
+                return "ENTRYPOINT: 未知\nCMD: 未知\n" + startupInfo.ErrorMessage + "\n可在下方命令的镜像名后手动补充启动命令。";
+            }
+
+            var entrypointText = FormatImageStartupArguments(startupInfo.EntrypointArguments);
+            var commandText = FormatImageStartupArguments(startupInfo.CommandArguments);
+            if (startupInfo.CommandArguments.Count > 0)
+            {
+                return "ENTRYPOINT: " + entrypointText + "\nCMD: " + commandText + "\n默认 CMD 已追加到下方命令，可直接修改。";
+            }
+
+            if (startupInfo.EntrypointArguments.Count > 0)
+            {
+                return "ENTRYPOINT: " + entrypointText + "\nCMD: (未定义)\n容器将使用镜像 ENTRYPOINT；如需参数，可在镜像名后补充。";
+            }
+
+            return "ENTRYPOINT: (未定义)\nCMD: (未定义)\n该镜像没有默认启动命令，请在下方命令的镜像名后手动填写。";
+        }
+
+        private static string FormatImageStartupArguments(IList<string> arguments)
+        {
+            if (arguments == null || arguments.Count == 0)
+            {
+                return "(未定义)";
+            }
+
+            return "[" + string.Join(", ", arguments.Select(value =>
+                "\"" + (value ?? string.Empty)
+                    .Replace("\\", "\\\\")
+                    .Replace("\"", "\\\"")
+                    .Replace("\r", "\\r")
+                    .Replace("\n", "\\n") + "\"")) + "]";
+        }
+
+        private static string BuildCreateContainerCommand(CreateContainerRequest request, IList<string> imageCommandArguments, bool usesPosixShell)
         {
             var command = string.Format("create -it --name \"{0}\"", request.ContainerName);
             command += " --privileged";
@@ -7031,7 +8118,58 @@ namespace WpfApp1
             }
 
             command += string.Format(" \"{0}\"", request.Image);
+            if (imageCommandArguments != null)
+            {
+                for (var i = 0; i < imageCommandArguments.Count; i++)
+                {
+                    command += " " + QuoteDockerCommandArgument(imageCommandArguments[i], usesPosixShell);
+                }
+            }
+
             return command;
+        }
+
+        private static string QuoteDockerCommandArgument(string value, bool usesPosixShell)
+        {
+            var text = value ?? string.Empty;
+            if (text.Length > 0 && Regex.IsMatch(text, @"^[a-zA-Z0-9_./:@%+=,-]+$"))
+            {
+                return text;
+            }
+
+            if (usesPosixShell)
+            {
+                return "'" + EscapeShellSingleQuoted(text) + "'";
+            }
+
+            var quoted = new StringBuilder(text.Length + 2);
+            quoted.Append('\"');
+            var backslashCount = 0;
+            for (var i = 0; i < text.Length; i++)
+            {
+                var ch = text[i];
+                if (ch == '\\')
+                {
+                    backslashCount++;
+                    continue;
+                }
+
+                if (ch == '\"')
+                {
+                    quoted.Append('\\', backslashCount * 2 + 1);
+                    quoted.Append('\"');
+                    backslashCount = 0;
+                    continue;
+                }
+
+                quoted.Append('\\', backslashCount);
+                backslashCount = 0;
+                quoted.Append(ch);
+            }
+
+            quoted.Append('\\', backslashCount * 2);
+            quoted.Append('\"');
+            return quoted.ToString();
         }
 
         private Window CreateContainerLoadingWindow(string text)
@@ -7384,6 +8522,13 @@ namespace WpfApp1
                 return false;
             }
 
+            var deviceName = GetDeviceNameByContextName(context);
+            if (string.IsNullOrWhiteSpace(deviceName))
+            {
+                return false;
+            }
+
+            var summaryVersion = InvalidateContainerRefresh(context);
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
@@ -7393,7 +8538,7 @@ namespace WpfApp1
                     return false;
                 }
 
-                var refreshTask = RefreshContainerRowsForContextAsync(context);
+                var refreshTask = Task.Run(() => QueryContainerSummary(context));
                 var refreshCompleted = await Task.WhenAny(
                     refreshTask,
                     Task.Delay(remainingMs));
@@ -7402,7 +8547,20 @@ namespace WpfApp1
                     return false;
                 }
 
-                await refreshTask;
+                var query = await refreshTask;
+                if (!IsContainerRefreshVersionCurrent(context, summaryVersion))
+                {
+                    return false;
+                }
+
+                if (!query.Success)
+                {
+                    await Task.Delay(Math.Min(1000, Math.Max(1, remainingMs)));
+                    continue;
+                }
+
+                ApplyContainerSummary(context, deviceName, query.Containers);
+                SetContainerDeviceOnline(context, true);
                 var rows = _containerRows
                     .Where(r => string.Equals(GetContainerContextNameByDevice(r.DeviceName), context, StringComparison.OrdinalIgnoreCase))
                     .ToList();
@@ -7417,7 +8575,7 @@ namespace WpfApp1
             return false;
         }
 
-        private async Task RefreshContainerRowsForContextAsync(string contextName)
+        private async Task RefreshFullContainerRowsForContextAsync(string contextName)
         {
             var context = (contextName ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(context))
@@ -7428,76 +8586,37 @@ namespace WpfApp1
             var deviceName = GetDeviceNameByContextName(context);
             if (string.IsNullOrWhiteSpace(deviceName))
             {
-                await RefreshRuntimeDataBindingsAsync(true);
                 return;
             }
 
-            var oldDeviceRows = _containerRows
-                .Where(r => string.Equals(r.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            var refreshedRows = await Task.Run(() =>
+            var refreshState = BeginContainerDetailRefresh(context);
+            var summaryVersion = refreshState.Item1;
+            var query = await Task.Run(() => QueryContainerSummary(context, refreshState.Item2));
+            if (!IsContainerRefreshVersionCurrent(context, summaryVersion))
             {
-                var containers = ReadDockerContainers(context);
-                var statsById = ReadDockerContainerStats(context);
-                var hostCpuLimitText = ReadHostCpuLimitText(context);
-                var rows = new List<ContainerComposeRow>();
+                return;
+            }
 
-                for (var i = 0; i < containers.Count; i++)
+            if (!query.Success)
+            {
+                InvalidateContainerRefresh(context);
+                SetContainerDeviceOnline(context, false);
+                if (string.Equals(GetSelectedContainerContextName(), context, StringComparison.OrdinalIgnoreCase))
                 {
-                    var c = containers[i];
-                    DockerContainerStatsInfo stat;
-                    var hasStat = TryGetContainerStats(statsById, c.Id, out stat);
-                    var limitInfo = ReadContainerLimitInfo(context, c.Id);
-                    var oldRow = oldDeviceRows.FirstOrDefault(r => IsContainerMatch(r, c.Id));
-
-                    var normalizedName = c.Name.StartsWith("/") ? c.Name : "/" + c.Name;
-                    var cpuCores = BuildCpuCoresDisplayText(limitInfo.CpuCoresText, hostCpuLimitText);
-                    var memoryUsage = hasStat && !string.IsNullOrWhiteSpace(stat.MemoryUsageText)
-                        ? stat.MemoryUsageText
-                        : "-";
-                    memoryUsage = MergeMemoryUsageWithLimit(memoryUsage, limitInfo.MemoryLimitText);
-                    var cpuPercent = hasStat ? stat.CpuPercentText : "0%";
-                    var memoryPercent = hasStat ? stat.MemoryPercentText : "0%";
-                    var blockIo = hasStat ? stat.BlockIoText : "0B / 0B";
-                    var sizeText = string.IsNullOrWhiteSpace(c.Size)
-                        ? (oldRow == null ? "-" : (oldRow.Size ?? "-"))
-                        : c.Size;
-                    var portsText = ResolveContainerPortsForDisplay(context, c.Id, c.Ports, oldRow == null ? "-" : oldRow.Ports);
-
-                    rows.Add(new ContainerComposeRow(
-                        deviceName,
-                        ShortContainerId(c.Id),
-                        normalizedName,
-                        BuildChineseContainerName(c.Name),
-                        NormalizeImageNameWithTag(c.Image),
-                        string.IsNullOrWhiteSpace(c.State) ? "unknown" : c.State,
-                        string.IsNullOrWhiteSpace(portsText) ? "-" : portsText,
-                        string.IsNullOrWhiteSpace(cpuCores) ? "-" : cpuCores,
-                        string.IsNullOrWhiteSpace(cpuPercent) ? "0%" : cpuPercent,
-                        string.IsNullOrWhiteSpace(memoryUsage) ? "-" : memoryUsage,
-                        string.IsNullOrWhiteSpace(memoryPercent) ? "0%" : memoryPercent,
-                        string.IsNullOrWhiteSpace(blockIo) ? "0B / 0B" : blockIo,
-                        c.Status,
-                        c.Id,
-                        string.IsNullOrWhiteSpace(sizeText) ? "-" : sizeText));
+                    SetContainerPageState("设备离线，正在显示只读缓存数据", false, true);
                 }
-
-                return rows;
-            });
-
-            if (!Dispatcher.CheckAccess())
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    ApplyRefreshedContainerRows(deviceName, refreshedRows);
-                    StartContainerSizeBackfill(context, deviceName);
-                });
                 return;
             }
 
-            ApplyRefreshedContainerRows(deviceName, refreshedRows);
-            StartContainerSizeBackfill(context, deviceName);
+            ApplyContainerSummary(context, deviceName, query.Containers);
+            SetContainerDeviceOnline(context, true);
+            if (string.Equals(GetSelectedContainerContextName(), context, StringComparison.OrdinalIgnoreCase))
+            {
+                SetContainerPageState(query.Containers.Count == 0 ? "暂无容器" : "设备在线，概要已同步", true, false);
+            }
+
+            var containerIdSnapshot = BuildContainerIdSnapshot(query.Containers);
+            StartContainerDetailsRefresh(context, deviceName, query.Containers, containerIdSnapshot, refreshState.Item1, refreshState.Item2);
         }
 
         private void ApplyRefreshedContainerRows(string deviceName, List<ContainerComposeRow> refreshedRows)
@@ -7527,125 +8646,6 @@ namespace WpfApp1
 
             var fallback = (fallbackPorts ?? string.Empty).Trim();
             return string.IsNullOrWhiteSpace(fallback) ? "-" : fallback;
-        }
-
-        private void StartContainerSizeBackfill(string contextName, string deviceName)
-        {
-            var context = (contextName ?? string.Empty).Trim();
-            var device = (deviceName ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(context) || string.IsNullOrWhiteSpace(device))
-            {
-                return;
-            }
-
-            lock (_containerSizeBackfillRunningContexts)
-            {
-                if (_containerSizeBackfillRunningContexts.Contains(context))
-                {
-                    return;
-                }
-
-                _containerSizeBackfillRunningContexts.Add(context);
-            }
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var rowsSnapshot = _containerRows
-                        .Where(r =>
-                            string.Equals(r.DeviceName, device, StringComparison.OrdinalIgnoreCase) &&
-                            (string.IsNullOrWhiteSpace(r.Size) || r.Size == "-"))
-                        .ToList();
-
-                    for (var i = 0; i < rowsSnapshot.Count; i++)
-                    {
-                        var row = rowsSnapshot[i];
-                        var fullId = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
-                        if (string.IsNullOrWhiteSpace(fullId))
-                        {
-                            continue;
-                        }
-
-                        string output;
-                        var inspectCmd = string.Format("container inspect --size \"{0}\" --format \"{{{{.SizeRw}}}}\"", fullId);
-                        var ok = TryRunDockerCommand(inspectCmd, context, out output, 10000);
-                        if (!ok)
-                        {
-                            continue;
-                        }
-
-                        var text = (output ?? string.Empty).Trim();
-                        long sizeBytes;
-                        if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out sizeBytes) || sizeBytes < 0)
-                        {
-                            continue;
-                        }
-
-                        var sizeText = FormatBytes(sizeBytes);
-                        if (!Dispatcher.CheckAccess())
-                        {
-                            await Dispatcher.InvokeAsync(() => UpdateContainerRowSize(device, fullId, sizeText));
-                        }
-                        else
-                        {
-                            UpdateContainerRowSize(device, fullId, sizeText);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("Container size backfill failed: " + ex.Message);
-                }
-                finally
-                {
-                    lock (_containerSizeBackfillRunningContexts)
-                    {
-                        _containerSizeBackfillRunningContexts.Remove(context);
-                    }
-                }
-            });
-        }
-
-        private void UpdateContainerRowSize(string deviceName, string fullId, string sizeText)
-        {
-            if (string.IsNullOrWhiteSpace(deviceName) || string.IsNullOrWhiteSpace(fullId))
-            {
-                return;
-            }
-
-            var index = _containerRows.FindIndex(r =>
-                string.Equals(r.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase) &&
-                IsContainerMatch(r, fullId));
-            if (index < 0)
-            {
-                return;
-            }
-
-            var current = _containerRows[index];
-            _containerRows[index] = new ContainerComposeRow(
-                current.DeviceName,
-                current.Id,
-                current.Name,
-                current.ChineseName,
-                current.Image,
-                current.Status,
-                current.Ports,
-                current.CpuCores,
-                current.CpuPercent,
-                current.MemoryUsage,
-                current.MemoryPercent,
-                current.DiskReadWrite,
-                current.Detail,
-                current.FullId,
-                string.IsNullOrWhiteSpace(sizeText) ? "-" : sizeText);
-
-            var selectedDeviceName = GetSelectedContainerDeviceName();
-            if (string.IsNullOrWhiteSpace(selectedDeviceName) ||
-                string.Equals(selectedDeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
-            {
-                BindContainerRows(selectedDeviceName);
-            }
         }
 
         private string GetDeviceNameByContextName(string contextName)
@@ -7908,7 +8908,9 @@ namespace WpfApp1
                 row.MemoryPercent,
                 row.DiskReadWrite,
                 row.Detail,
-                row.FullId);
+                row.FullId,
+                row.Size,
+                row.Command);
         }
 
         private static string EscapeSimpleCsv(string value)
@@ -8030,15 +9032,13 @@ namespace WpfApp1
                 return false;
             }
 
-            var rowId = string.IsNullOrWhiteSpace(row.FullId) ? row.Id : row.FullId;
+            var rowId = row.FullId;
             if (string.IsNullOrWhiteSpace(rowId))
             {
                 return false;
             }
 
-            return string.Equals(rowId, fullId, StringComparison.OrdinalIgnoreCase) ||
-                   rowId.StartsWith(fullId, StringComparison.OrdinalIgnoreCase) ||
-                   fullId.StartsWith(rowId, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(rowId, fullId, StringComparison.OrdinalIgnoreCase);
         }
 
         private string GetSelectedContainerDeviceName()
@@ -8449,6 +9449,32 @@ namespace WpfApp1
             public string Detail { get; }
         }
 
+        private sealed class ImageStartupInfo
+        {
+            private ImageStartupInfo(bool readSucceeded, List<string> entrypointArguments, List<string> commandArguments, string errorMessage)
+            {
+                ReadSucceeded = readSucceeded;
+                EntrypointArguments = entrypointArguments ?? new List<string>();
+                CommandArguments = commandArguments ?? new List<string>();
+                ErrorMessage = errorMessage ?? string.Empty;
+            }
+
+            public bool ReadSucceeded { get; }
+            public List<string> EntrypointArguments { get; }
+            public List<string> CommandArguments { get; }
+            public string ErrorMessage { get; }
+
+            public static ImageStartupInfo Succeeded(List<string> entrypointArguments, List<string> commandArguments)
+            {
+                return new ImageStartupInfo(true, entrypointArguments, commandArguments, string.Empty);
+            }
+
+            public static ImageStartupInfo Failed(string errorMessage)
+            {
+                return new ImageStartupInfo(false, new List<string>(), new List<string>(), errorMessage);
+            }
+        }
+
         private sealed class CreateContainerRequest
         {
             public CreateContainerRequest(string image, string containerName, double cpuCores, int memoryLimitMb, List<PortMapping> portMappings, string cassMonitorPort = "", string cassBootPort = "")
@@ -8552,39 +9578,62 @@ namespace WpfApp1
             public string MemoryLimitText { get; }
         }
 
+        private enum ContainerReadMode
+        {
+            LightweightSummary,
+            FullDetails
+        }
+
+        private enum SnapshotApplyMode
+        {
+            ReplaceAll,
+            MergeDevices
+        }
+
+        private sealed class LightweightDockerData
+        {
+            public LightweightDockerData(
+                List<DockerImageInfo> images,
+                int runningContainerCount,
+                double cpuUsagePercent,
+                double memoryUsagePercent,
+                double diskUsagePercent)
+            {
+                Images = images ?? new List<DockerImageInfo>();
+                RunningContainerCount = runningContainerCount;
+                CpuUsagePercent = cpuUsagePercent;
+                MemoryUsagePercent = memoryUsagePercent;
+                DiskUsagePercent = diskUsagePercent;
+            }
+
+            public List<DockerImageInfo> Images { get; }
+            public int RunningContainerCount { get; }
+            public double CpuUsagePercent { get; }
+            public double MemoryUsagePercent { get; }
+            public double DiskUsagePercent { get; }
+        }
+
         private sealed class DockerRuntimeSnapshot
         {
             public DockerRuntimeSnapshot(
                 List<DeviceInfo> devices,
                 List<DeviceImageRow> deviceImageRows,
                 List<ContainerComposeRow> containerRows,
-                List<ImageComposeRow> sourceImages,
-                List<ImageComposeRow> preparedImages,
-                List<ProgramFileRow> programFiles,
-                List<DeployImageCard> strategyImages,
                 Dictionary<string, string> deviceContexts,
-                bool includeContainerData)
+                ContainerReadMode containerReadMode)
             {
                 Devices = devices;
                 DeviceImageRows = deviceImageRows;
                 ContainerRows = containerRows;
-                SourceImages = sourceImages;
-                PreparedImages = preparedImages;
-                ProgramFiles = programFiles;
-                StrategyImages = strategyImages;
                 DeviceContexts = deviceContexts;
-                IncludeContainerData = includeContainerData;
+                ContainerReadMode = containerReadMode;
             }
 
             public List<DeviceInfo> Devices { get; }
             public List<DeviceImageRow> DeviceImageRows { get; }
             public List<ContainerComposeRow> ContainerRows { get; }
-            public List<ImageComposeRow> SourceImages { get; }
-            public List<ImageComposeRow> PreparedImages { get; }
-            public List<ProgramFileRow> ProgramFiles { get; }
-            public List<DeployImageCard> StrategyImages { get; }
             public Dictionary<string, string> DeviceContexts { get; }
-            public bool IncludeContainerData { get; }
+            public ContainerReadMode ContainerReadMode { get; }
         }
 
         private sealed class DockerContextInfo
@@ -8619,7 +9668,7 @@ namespace WpfApp1
 
         private sealed class DockerContainerInfo
         {
-            public DockerContainerInfo(string id, string name, string image, string ports, string status, string state, string size)
+            public DockerContainerInfo(string id, string name, string image, string ports, string status, string state, string size, string command = "")
             {
                 Id = id;
                 Name = name;
@@ -8628,6 +9677,7 @@ namespace WpfApp1
                 Status = status;
                 State = state;
                 Size = size;
+                Command = string.IsNullOrWhiteSpace(command) ? "-" : command;
             }
 
             public string Id { get; }
@@ -8637,6 +9687,7 @@ namespace WpfApp1
             public string Status { get; }
             public string State { get; }
             public string Size { get; }
+            public string Command { get; }
         }
 
         private sealed class DockerContainerStatsInfo
